@@ -7,15 +7,15 @@
 #   PANEL_REPO=owner/repo   GitHub repo hosting releases (default Nikkoadr/ProxPilot)
 #   PANEL_VERSION=v2.1.0    release tag, or "latest"
 #   ADMIN_USER / ADMIN_PASS  seed login (default admin / admin123, change in Settings!)
-#   DATA_DIR                sqlite + state dir (default /var/lib/proxmox-panel)
+#   DATA_DIR                sqlite + state dir (default /var/lib/proxpilot)
 #   NO_SERVICE=1            skip systemd service, just install binary + deps
 set -euo pipefail
 
 REPO="${PANEL_REPO:-Nikkoadr/ProxPilot}"
 VERSION="${PANEL_VERSION:-latest}"
-DATA_DIR="${DATA_DIR:-/var/lib/proxmox-panel}"
-BIN="/usr/local/bin/proxmox-panel"
-SERVICE="proxmox-panel"
+DATA_DIR="${DATA_DIR:-/var/lib/proxpilot}"
+BIN="/usr/local/bin/proxpilot"
+SERVICE="proxpilot"
 
 # Repo PRIVATE: export GITHUB_TOKEN=<personal-access-token> sebelum install.
 # Token butuh akses baca repo (classic PAT: scope `repo`).
@@ -28,6 +28,26 @@ fi
 
 SUDO=""
 if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
+
+# Migrasi sekali saja dari nama lama (proxmox-panel): hentikan service lama,
+# pindahkan data (DB + cluster tidak hilang), hapus binary lama.
+OLD_BIN="/usr/local/bin/proxmox-panel"
+OLD_SERVICE="proxmox-panel"
+OLD_DATA="/var/lib/proxmox-panel"
+if [[ -f "$OLD_BIN" || -d "$OLD_DATA" ]]; then
+  echo "(migrasi instalasi lama proxmox-panel -> proxpilot...)"
+  if [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
+    $SUDO systemctl stop "$OLD_SERVICE" 2>/dev/null || true
+    $SUDO systemctl disable "$OLD_SERVICE" 2>/dev/null || true
+  fi
+  if [[ -d "$OLD_DATA" && ! -d "$DATA_DIR" ]]; then
+    $SUDO mkdir -p "$(dirname "$DATA_DIR")"
+    $SUDO mv "$OLD_DATA" "$DATA_DIR"
+    echo "      data dipindah: $OLD_DATA -> $DATA_DIR"
+  fi
+  $SUDO rm -f "$OLD_BIN"
+  $SUDO rm -rf /usr/share/proxmox-panel
+fi
 
 echo "==> [1/6] system deps (openssh, ansible, sqlite3, build tools)..."
 $SUDO apt-get update -qq
@@ -72,10 +92,10 @@ if [[ "$VERSION" == "latest" ]]; then
 else
   TAG="$VERSION"
 fi
-URL="https://github.com/$REPO/releases/download/${TAG:-none}/proxmox-panel-linux-x86_64"
-if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL" 2>/dev/null; then
-  $SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
-  rm -f /tmp/proxmox-panel
+URL="https://github.com/$REPO/releases/download/${TAG:-none}/proxpilot-linux-x86_64"
+if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxpilot "$URL" 2>/dev/null; then
+  $SUDO install -m 0755 /tmp/proxpilot "$BIN"
+  rm -f /tmp/proxpilot
   echo "      installed: $BIN ($TAG)"
 else
   echo "      no release asset — building from source (this takes a few minutes)..."
@@ -84,12 +104,12 @@ else
   rm -rf /tmp/panel-src
   git clone --depth 1 --branch master "$CLONE_URL" /tmp/panel-src
   (cd /tmp/panel-src/panel && cargo build --release)
-  $SUDO install -m 0755 /tmp/panel-src/panel/target/release/proxmox-panel "$BIN"
+  $SUDO install -m 0755 /tmp/panel-src/panel/target/release/proxpilot "$BIN"
   echo "      installed: $BIN (built from source)"
 fi
 
-echo "==> [4b/6] static files (/usr/share/proxmox-panel/static)..."
-STATIC_DST="/usr/share/proxmox-panel/static"
+echo "==> [4b/6] static files (/usr/share/proxpilot/static)..."
+STATIC_DST="/usr/share/proxpilot/static"
 if [[ -d /tmp/panel-src/panel/static ]]; then
   $SUDO mkdir -p "$STATIC_DST"
   $SUDO cp -r /tmp/panel-src/panel/static/. "$STATIC_DST/"
@@ -132,17 +152,17 @@ if [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
   ADMIN_USER="${ADMIN_USER:-admin}" ADMIN_PASS="${ADMIN_PASS:-admin123}"
   $SUDO tee "/etc/systemd/system/$SERVICE.service" > /dev/null <<EOF
 [Unit]
-Description=Proxmox Panel (Rust + SB Admin 2)
+Description=ProxPilot Panel (Rust + SB Admin 2)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=$(id -un)
-WorkingDirectory=/usr/share/proxmox-panel
+WorkingDirectory=/usr/share/proxpilot
 Environment=PORT=8080
 Environment=PANEL_DATA=$DATA_DIR
-Environment=PANEL_STATIC=/usr/share/proxmox-panel/static
+Environment=PANEL_STATIC=/usr/share/proxpilot/static
 Environment=ADMIN_USER=$ADMIN_USER
 Environment=ADMIN_PASS=$ADMIN_PASS
 ExecStart=$BIN

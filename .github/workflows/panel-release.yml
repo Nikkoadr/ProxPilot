@@ -24,7 +24,7 @@ jobs:
 
       # Gagal berisik kalau binary tidak ada (bukan hijau palsu).
       - name: Verify binary
-        run: ls -lh target/release/proxmox-panel && file target/release/proxmox-panel
+        run: ls -lh target/release/proxpilot && file target/release/proxpilot
 
       # gh langsung (preinstalled di runner): gagal berisik kalau file hilang,
       # --clobber menimpa asset saat re-run.
@@ -34,5 +34,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp target/release/proxmox-panel ./proxmox-panel-linux-x86_64
-          gh release upload "${{ github.ref_name }}" ./proxmox-panel-linux-x86_64 --clobber
+          cp target/release/proxpilot ./proxpilot-linux-x86_64
+          gh release upload "${{ github.ref_name }}" ./proxpilot-linux-x86_64 --clobber

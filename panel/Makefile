@@ -11,7 +11,7 @@ build:
 	cargo build --release
 
 run:
-	PORT=$(PORT) ./target/release/proxmox-panel
+	PORT=$(PORT) ./target/release/proxpilot
 
 dev:
 	PORT=$(PORT) cargo run

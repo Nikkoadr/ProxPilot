@@ -5,11 +5,31 @@ set -euo pipefail
 
 REPO="${PANEL_REPO:-Nikkoadr/ProxPilot}"
 VERSION="${1:-${PANEL_VERSION:-latest}}"
-BIN="/usr/local/bin/proxmox-panel"
-SERVICE="proxmox-panel"
+BIN="/usr/local/bin/proxpilot"
+SERVICE="proxpilot"
+DATA_DIR="${DATA_DIR:-/var/lib/proxpilot}"
 
 SUDO=""
 if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
+
+# Migrasi sekali saja dari nama lama (lihat install.sh).
+OLD_BIN="/usr/local/bin/proxmox-panel"
+OLD_SERVICE="proxmox-panel"
+OLD_DATA="/var/lib/proxmox-panel"
+if [[ -f "$OLD_BIN" || -d "$OLD_DATA" ]]; then
+  echo "(migrasi instalasi lama proxmox-panel -> proxpilot...)"
+  if [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
+    $SUDO systemctl stop "$OLD_SERVICE" 2>/dev/null || true
+    $SUDO systemctl disable "$OLD_SERVICE" 2>/dev/null || true
+  fi
+  if [[ -d "$OLD_DATA" && ! -d "$DATA_DIR" ]]; then
+    $SUDO mkdir -p "$(dirname "$DATA_DIR")"
+    $SUDO mv "$OLD_DATA" "$DATA_DIR"
+    echo "data dipindah: $OLD_DATA -> $DATA_DIR"
+  fi
+  $SUDO rm -f "$OLD_BIN"
+  $SUDO rm -rf /usr/share/proxmox-panel
+fi
 
 AUTH=()
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
@@ -27,18 +47,18 @@ if [[ -z "${TAG:-}" ]]; then
 fi
 
 echo "Updating to $TAG..."
-URL="https://github.com/$REPO/releases/download/$TAG/proxmox-panel-linux-x86_64"
-if ! curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"; then
-  echo "ERROR: asset 'proxmox-panel-linux-x86_64' tidak ada di Release $TAG." >&2
+URL="https://github.com/$REPO/releases/download/$TAG/proxpilot-linux-x86_64"
+if ! curl -fsSL "${AUTH[@]}" -o /tmp/proxpilot "$URL"; then
+  echo "ERROR: asset 'proxpilot-linux-x86_64' tidak ada di Release $TAG." >&2
   echo "Cek: https://github.com/$REPO/releases/tag/$TAG" >&2
   echo "Rilis binary baru: push tag 'panel-vX.Y.Z' (CI build otomatis) lalu update lagi." >&2
   exit 1
 fi
-$SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
-rm -f /tmp/proxmox-panel
+$SUDO install -m 0755 /tmp/proxpilot "$BIN"
+rm -f /tmp/proxpilot
 
 echo "Refreshing static files..."
-STATIC_DST="/usr/share/proxmox-panel/static"
+STATIC_DST="/usr/share/proxpilot/static"
 CLONE_URL="https://github.com/$REPO.git"
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   CLONE_URL="https://oauth2:${GITHUB_TOKEN}@github.com/$REPO.git"
@@ -56,7 +76,32 @@ else
 fi
 
 if [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
-  $SUDO systemctl restart "$SERVICE"
+  # Tulis ulang unit (path binary/static baru setelah rename), lalu restart.
+  ADMIN_USER="${ADMIN_USER:-admin}" ADMIN_PASS="${ADMIN_PASS:-admin123}"
+  $SUDO tee "/etc/systemd/system/$SERVICE.service" > /dev/null <<EOF
+[Unit]
+Description=ProxPilot Panel (Rust + SB Admin 2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$(id -un)
+WorkingDirectory=/usr/share/proxpilot
+Environment=PORT=8080
+Environment=PANEL_DATA=$DATA_DIR
+Environment=PANEL_STATIC=/usr/share/proxpilot/static
+Environment=ADMIN_USER=$ADMIN_USER
+Environment=ADMIN_PASS=$ADMIN_PASS
+ExecStart=$BIN
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  $SUDO systemctl daemon-reload
+  $SUDO systemctl enable --now "$SERVICE"
   echo "service: $(systemctl is-active $SERVICE) ($TAG)"
 else
   echo "no systemd — restart manual panelnya (binary sudah diganti: $TAG)"

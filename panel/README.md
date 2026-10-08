@@ -18,7 +18,7 @@ Itu saja — script menginstall **rust +** ansible + terraform + openssh/sqlite3
 lalu pasang binary (dari GitHub Release, atau **build dari source otomatis** kalau Release belum ada),
 dan pasang systemd service (restart otomatis).
 
-Env opsional: `PANEL_REPO=Nikkoadr/ProxPilot PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
+Env opsional: `PANEL_REPO=Nikkoadr/ProxPilot PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxpilot NO_SERVICE=1`.
 
 ### Repo private (butuh token)
 
@@ -67,7 +67,7 @@ cd /mnt/d/laragon/www/ProxPilot/panel   # sesuaikan path repo
 ./start.sh        # PORT=8080 PANEL_DATA=./data cargo run
 ```
 
-## Release (2 cara, asset wajib `proxmox-panel-linux-x86_64`)
+## Release (2 cara, asset wajib `proxpilot-linux-x86_64`)
 
 **A. Otomatis via CI (disarankan)** — push tag, binary di-build + ditempel ke Release:
 
@@ -82,7 +82,8 @@ git push origin panel-v2.1.0
 ```bash
 cd /mnt/d/laragon/www/ProxPilot/panel
 cargo build --release
-gh release create panel-v2.1.0 target-linux/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ProxPilot
+cp target/release/proxpilot ./proxpilot-linux-x86_64
+gh release upload panel-v2.1.0 ./proxpilot-linux-x86_64 --repo Nikkoadr/ProxPilot
 ```
 
 `install.sh` mengambil Release `latest` secara default (`PANEL_VERSION` untuk pin versi,
@@ -90,8 +91,8 @@ mis. `PANEL_VERSION=panel-v2.1.0`).
 
 ## Service / restart tetap jalan
 
-systemd unit dibuat otomatis oleh `install.sh`: `systemctl status proxmox-panel`.
-WSL tanpa systemd: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, lalu `wsl --shutdown`), atau jalankan manual `PANEL_DATA=... proxmox-panel`.
+systemd unit dibuat otomatis oleh `install.sh`: `systemctl status proxpilot`.
+WSL tanpa systemd: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, lalu `wsl --shutdown`), atau jalankan manual `PANEL_DATA=... proxpilot`.
 
 ## Data & login
 
@@ -164,7 +165,7 @@ halaman cluster-detail → Save → Deploy ulang. Tidak perlu hapus cluster.
    - test Proxmox `/version` (live) — gagal = deploy **dibatalkan** dengan status `error` (tidak ada sukses palsu),
    - tulis `$PANEL_DATA/infra/terraform/<id>/{main.tf, terraform.tfvars (0600, secret asli), inventory.ini, deploy-remote.sh}`,
    - lokal: `terraform init` + `terraform apply -auto-approve` di host ini,
-   - remote: `scp -r` direktori cluster ke `/tmp/proxmox-panel/<id>/` lalu `terraform init + apply` di server,
+   - remote: `scp -r` direktori cluster ke `/tmp/proxpilot/<id>/` lalu `terraform init + apply` di server,
    - sukses apply → status `running` 100% + perintah ansible lanjutan di log.
 4. Log mengalir realtime ke `cluster-detail.html` via WS; kalau WS putus, polling 3s backup.
 5. Kubernetes **tidak** diinstal otomatis (fase kubeadm/Calico palsu sudah dihapus) — jalankan playbook dari repo root dengan `inventory.ini` hasil generate:

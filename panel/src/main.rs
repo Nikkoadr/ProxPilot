@@ -69,7 +69,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("proxmox-panel (Rust + SB Admin 2) on http://localhost:{port}");
+    tracing::info!("proxpilot (Rust + SB Admin 2) on http://localhost:{port}");
     tracing::info!("login default: admin / admin123 (change in Settings)");
     let listener = tokio::net::TcpListener::bind(addr).await.expect("bind");
     axum::serve(listener, app).await.expect("serve");
@@ -97,7 +97,7 @@ fn resolve_dirs(base: &std::path::Path) -> (String, String) {
             base.join("static")
                 .to_string_lossy()
                 .to_string(),
-            "/usr/share/proxmox-panel/static".to_string(),
+            "/usr/share/proxpilot/static".to_string(),
         ] {
             if std::path::Path::new(&cand).join("login.html").exists() {
                 return cand;
