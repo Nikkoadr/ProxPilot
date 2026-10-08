@@ -5,7 +5,24 @@ async function init(){
   document.getElementById('btnSsh').onclick=testSsh;
   document.getElementById('form').onsubmit=submit;
   document.getElementById('useRemote').onchange=toggleRemote;
+  document.getElementById('clone_template').onchange=onTemplate;
   toggleRemote();
+}
+function templateVal(){
+  const s=document.getElementById('clone_template');
+  if(s&&s.value==='__custom'){const c=document.getElementById('clone_template_custom');return c?c.value.trim():'';}
+  return val('clone_template');
+}
+function onTemplate(){
+  const s=document.getElementById('clone_template'), c=document.getElementById('clone_template_custom');
+  if(c)c.style.display=(s&&s.value==='__custom')?'':'none';
+  // autosuggest SSH user VM (jangan timpa kalau user sudah edit manual)
+  const u=document.getElementById('ssh_user_vm');
+  if(!u||u.dataset.touched)return;
+  const t=(s?s.value:'').toLowerCase();
+  if(t.includes('rocky'))u.value='rocky';
+  else if(t.includes('debian'))u.value='admin';
+  else if(t.includes('ubuntu'))u.value='ubuntu';
 }
 function val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
 function num(id,d){const el=document.getElementById(id);const v=el?parseInt(el.value,10):NaN;return isNaN(v)?d:v;}
@@ -17,7 +34,10 @@ function fill(d){
 }
 function fillTemplates(t){
   const s=document.getElementById('clone_template');
-  s.innerHTML='<option value="">Select template...</option>'+(t||[]).map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${esc(x.size||'')})</option>`).join('');
+  s.innerHTML='<option value="">Select template...</option>'+(t||[]).map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${esc(x.description||x.size||'')})</option>`).join('')
+    +'<option value="__custom">⌨ Custom / ketik manual...</option>';
+  const u=document.getElementById('ssh_user_vm');
+  if(u)u.oninput=()=>{u.dataset.touched='1';};
 }
 function toggleRemote(){
   const on=document.getElementById('useRemote').checked;
@@ -52,7 +72,7 @@ async function submit(e){
     id:'',name:val('name'),proxmox_url:val('proxmox_url'),proxmox_user:val('proxmox_user')||'root@pam',
     token_id:val('token_id'),token_secret:document.getElementById('token_secret').value,
     verify_tls:document.getElementById('verify_tls').checked,
-    target_node:val('target_node')||'pve',clone_template:val('clone_template'),
+    target_node:val('target_node')||'pve',clone_template:templateVal(),
     network_bridge:val('network_bridge')||'vmbr0',gateway:val('gateway')||'192.168.1.1',dns1:val('dns1')||'8.8.8.8',
     master_count:num('master_count',1),master_cpu:num('master_cpu',4),master_ram:num('master_ram',8192),
     worker_count:num('worker_count',2),worker_cpu:num('worker_cpu',2),worker_ram:num('worker_ram',4096),

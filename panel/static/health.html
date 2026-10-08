@@ -53,9 +53,25 @@
 <div class="form-group col-4"><label>Port</label><input id="sPort" type="number" class="form-control" value="22"></div></div>
 <button id="btnSsh" class="btn btn-info btn-sm">Test SSH</button>
 <pre class="out mt-2" id="sshOut">not tested</pre>
-<div class="small text-muted mt-2">Di host ini: <code>ssh-keygen && ssh-copy-id root@&lt;proxmox&gt;</code>. Backend menjalankan <code>ssh -o BatchMode=yes ...</code> jadi tanpa password.</div>
+<div class="small text-muted mt-2">Backend menjalankan <code>ssh -o BatchMode=yes ...</code> jadi tanpa password setelah key disalin.</div>
 </div></div></div>
 </div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">SSH key — setup sekali dari sini (tanpa CLI)</h6></div>
+<div class="card-body">
+<p class="small text-muted">1. Generate key (sekali saja) → 2. salin ke server Proxmox dengan password (sekali per server) → 3. Test SSH di atas harus OK tanpa password.</p>
+<div class="form-group"><label>Public key host panel <span id="keyState" class="badge badge-secondary">loading...</span></label>
+<pre class="out" id="pubKey">(loading...)</pre></div>
+<button id="btnKeygen" class="btn btn-secondary btn-sm"><i class="fas fa-key"></i> Generate key (kalau belum ada)</button>
+<hr>
+<div class="form-row">
+<div class="form-group col-md-5"><label>SSH host</label><input id="cHost" class="form-control" placeholder="192.168.1.100"></div>
+<div class="form-group col-md-3"><label>SSH user</label><input id="cUser" class="form-control" value="root"></div>
+<div class="form-group col-md-2"><label>Port</label><input id="cPort" type="number" class="form-control" value="22"></div>
+<div class="form-group col-md-2"><label>Password *</label><input id="cPass" type="password" class="form-control" placeholder="sekali saja"></div>
+</div>
+<button id="btnCopyId" class="btn btn-success btn-sm"><i class="fas fa-paper-plane"></i> Salin key ke server</button>
+<pre class="out mt-2" id="copyOut">Password hanya dipakai sekali untuk ssh-copy-id — tidak disimpan di mana pun.</pre>
+</div></div>
 </div>
 </div>
 </div>

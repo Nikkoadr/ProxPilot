@@ -258,6 +258,19 @@ pub struct SshTestRequest {
     pub ssh_port: u16,
 }
 
+/// POST /api/ssh/copy-id — salin pubkey panel ke server dengan password
+/// sekali saja. Password tidak disimpan di mana pun.
+#[derive(Debug, Deserialize)]
+pub struct SshCopyIdRequest {
+    pub ssh_host: String,
+    #[serde(default = "default_ssh_remote")]
+    pub ssh_user: String,
+    #[serde(default = "default_ssh_port_fn")]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub ssh_password: String,
+}
+
 fn default_ssh_remote() -> String {
     "root".to_string()
 }

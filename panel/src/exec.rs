@@ -261,6 +261,140 @@ impl MapOk for CmdResult {
     }
 }
 
+/// Public key SSH host panel (None kalau belum ada).
+/// Dipakai halaman Health agar setup SSH cukup sekali dari panel.
+pub fn ssh_pubkey_get(via_wsl: bool) -> Option<String> {
+    if via_wsl {
+        let r = run_in_wsl("cat ~/.ssh/id_ed25519.pub 2>/dev/null || cat ~/.ssh/id_rsa.pub 2>/dev/null");
+        let t = r.output.trim().to_string();
+        if r.ok && t.starts_with("ssh-") {
+            return Some(t);
+        }
+        return None;
+    }
+    for name in ["id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub"] {
+        if let Ok(t) = std::fs::read_to_string(native_ssh_dir().join(name)) {
+            let t = t.trim().to_string();
+            if t.starts_with("ssh-") {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+/// Lokasi ~/.ssh di host tempat panel berjalan (native, tanpa WSL).
+fn native_ssh_dir() -> std::path::PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    std::path::Path::new(&home).join(".ssh")
+}
+
+/// Generate key ed25519 kalau belum ada (idempoten), lalu kembalikan pubkey.
+/// Tidak pernah menimpa key yang sudah ada.
+pub fn ssh_keygen(via_wsl: bool) -> CmdResult {
+    if via_wsl {
+        let r = run_in_wsl(
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh; \
+             if [ ! -f ~/.ssh/id_ed25519 ]; then ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q 2>&1; fi; \
+             chmod 600 ~/.ssh/id_ed25519 2>/dev/null; cat ~/.ssh/id_ed25519.pub 2>/dev/null",
+        );
+        let t = r.output.trim().to_string();
+        return CmdResult {
+            ok: r.ok && t.starts_with("ssh-"),
+            output: if t.starts_with("ssh-") { t } else { r.output },
+            ms: r.ms,
+        };
+    }
+    let dir = native_ssh_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return CmdResult { ok: false, output: format!("cannot create {}: {e}", dir.display()), ms: 0 };
+    }
+    if ssh_pubkey_get(false).is_none() {
+        let key = dir.join("id_ed25519");
+        let r = run_cmd(
+            "ssh-keygen",
+            &["-t", "ed25519", "-N", "", "-f", &key.to_string_lossy(), "-q"],
+            Duration::from_secs(30),
+        );
+        if !r.ok {
+            return r;
+        }
+    }
+    match ssh_pubkey_get(false) {
+        Some(k) => CmdResult { ok: true, output: k, ms: 0 },
+        None => CmdResult { ok: false, output: "keygen failed: no public key found".into(), ms: 0 },
+    }
+}
+
+/// Salin public key ke server (`ssh-copy-id`) memakai password sekali saja.
+/// Password dilewatkan via env `SSHPASS` (tidak muncul di `ps` / log).
+/// Butuh `sshpass` di host panel (sudah dipasang `install.sh`).
+pub fn ssh_copy_id(host: &str, user: &str, port: u16, password: &str, via_wsl: bool) -> CmdResult {
+    if password.is_empty() {
+        return CmdResult { ok: false, output: "password is required (one-time, never stored)".into(), ms: 0 };
+    }
+    let port_s = port.to_string();
+    if via_wsl {
+        // Single-quote escape untuk bash -lc di dalam WSL.
+        let pw = password.replace('\'', "'\\''");
+        let cmd = format!(
+            "SSHPASS='{pw}' sshpass -e ssh-copy-id -f -o StrictHostKeyChecking=accept-new -p {port} {user}@{host} 2>&1",
+            port = port_s,
+            user = shell_word(user),
+            host = shell_word(host),
+        );
+        let r = run_in_wsl(&cmd);
+        // Jangan bocorkan password ke output.
+        let clean = r.output.replace(password, "***");
+        return CmdResult { ok: r.ok, output: clean, ms: r.ms };
+    }
+    // Cek sshpass dulu agar error-nya jelas.
+    let has = run_cmd("sshpass", &["-V"], Duration::from_secs(10));
+    if !has.ok {
+        return CmdResult {
+            ok: false,
+            output: "sshpass not found on this host. Install it (apt install sshpass) or run install.sh again.".into(),
+            ms: 0,
+        };
+    }
+    let start = Instant::now();
+    let target = format!("{user}@{host}");
+    let out = Command::new("sshpass")
+        .args([
+            "-e",
+            "ssh-copy-id",
+            "-f",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-p",
+            port_s.as_str(),
+            target.as_str(),
+        ])
+        .env("SSHPASS", password)
+        .output();
+    let ms = start.elapsed().as_millis();
+    match out {
+        Ok(o) => {
+            let mut s = decode_bytes(&o.stdout);
+            let e = decode_bytes(&o.stderr);
+            if !e.trim().is_empty() {
+                s.push_str("\n[stderr]\n");
+                s.push_str(&e);
+            }
+            // Bonus: langsung verifikasi BatchMode (tanpa password) sesudah copy.
+            let verify = ssh_test_native(host, user, port);
+            let ok = o.status.success() && verify.ok;
+            if !verify.ok {
+                s.push_str("\n[verify] passwordless login belum berhasil — cek output di atas.");
+            }
+            CmdResult { ok, output: s.trim().to_string(), ms }
+        }
+        Err(e) => CmdResult { ok: false, output: format!("failed to spawn sshpass: {e}"), ms },
+    }
+}
+
 /// Daftar key yang tersedia untuk SSH (membantu diagnosa "Permission denied").
 /// via_wsl=true -> cek ~/.ssh di dalam WSL; false -> cek %USERPROFILE%\.ssh native.
 pub fn ssh_keys_list(via_wsl: bool) -> String {

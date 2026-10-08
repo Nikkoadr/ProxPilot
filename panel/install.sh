@@ -31,7 +31,7 @@ if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
 
 echo "==> [1/6] system deps (openssh, ansible, sqlite3, build tools)..."
 $SUDO apt-get update -qq
-$SUDO apt-get install -y -qq openssh-client curl ca-certificates gpg sqlite3 ansible lsb-release build-essential pkg-config git > /dev/null
+$SUDO apt-get install -y -qq openssh-client sshpass curl ca-certificates gpg sqlite3 ansible lsb-release build-essential pkg-config git > /dev/null
 echo "      ansible: $(ansible --version 2>/dev/null | head -1 || echo MISSING)"
 
 echo "==> [1b/6] rust toolchain (cargo)..."

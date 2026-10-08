@@ -35,4 +35,31 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadTools();setInterval(loadTools,10000);
   document.getElementById('btnProx').onclick=testProxmox;
   document.getElementById('btnSsh').onclick=testSsh;
+  document.getElementById('btnKeygen').onclick=genKey;
+  document.getElementById('btnCopyId').onclick=copyId;
+  loadKey();
 });
+async function loadKey(){
+  const st=document.getElementById('keyState'), pre=document.getElementById('pubKey');
+  try{
+    const k=await apiGet('/api/ssh/key');
+    if(k.exists){st.className='badge badge-success';st.textContent='ada ('+(k.via||'')+')';pre.textContent=k.public_key;}
+    else{st.className='badge badge-warning';st.textContent='belum ada';pre.textContent='(belum ada — klik Generate key)';}
+  }catch(e){st.className='badge badge-danger';st.textContent='error';pre.textContent=String(e);}
+}
+async function genKey(){
+  const out=document.getElementById('copyOut');out.textContent='generating...';
+  try{await apiPost('/api/ssh/keygen',{});await loadKey();out.textContent='Key siap. Salin ke server di bawah.';}
+  catch(e){out.textContent=String(e);}
+}
+async function copyId(){
+  const out=document.getElementById('copyOut');out.textContent='copying key to server...';
+  const v=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+  try{
+    const r=await apiPost('/api/ssh/copy-id',{ssh_host:v('cHost'),ssh_user:v('cUser')||'root',
+      ssh_port:parseInt(v('cPort'),10)||22,ssh_password:document.getElementById('cPass').value});
+    document.getElementById('cPass').value='';
+    out.textContent=(r.ok?'OK — key tersalin. Test SSH di atas sekarang.\n':'GAGAL.\n')+JSON.stringify(r,null,2);
+    if(r.ok){const s=document.getElementById('sHost');if(s&&!s.value)s.value=v('cHost');}
+  }catch(e){out.textContent=String(e);}
+}

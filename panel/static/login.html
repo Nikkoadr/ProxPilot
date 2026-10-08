@@ -3,44 +3,55 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Proxmox Panel — Login</title>
-<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
-<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#333;padding:16px}
+.card{background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.4);width:100%;max-width:400px;padding:36px 32px}
+.logo{text-align:center;margin-bottom:20px}
+.logo .icon{font-size:42px}
+.logo h1{font-size:22px;color:#1a1a2e;margin:8px 0 4px}
+.logo p{font-size:12px;color:#888}
+label{display:block;font-size:12px;font-weight:600;color:#555;margin:12px 0 4px;text-transform:uppercase;letter-spacing:.5px}
+input{width:100%;padding:11px 14px;border:1px solid #d1d3e2;border-radius:8px;font-size:15px;outline:none;transition:border .15s}
+input:focus{border-color:#4e73df;box-shadow:0 0 0 3px rgba(78,115,223,.15)}
+#err{color:#e74a3b;font-size:13px;min-height:20px;margin:10px 0 6px}
+button{width:100%;padding:12px;border:0;border-radius:8px;background:#4e73df;color:#fff;font-size:15px;font-weight:600;cursor:pointer;transition:background .15s}
+button:hover{background:#2e59d9}
+button:disabled{opacity:.6;cursor:wait}
+.hint{text-align:center;font-size:12px;color:#888;margin-top:18px;border-top:1px solid #eee;padding-top:14px}
+.hint code{background:#f3f4f6;padding:1px 6px;border-radius:4px}
+</style>
 </head>
-<body class="bg-gradient-primary">
-<div class="container">
-<div class="row justify-content-center">
-<div class="col-xl-5 col-lg-6 col-md-8">
-<div class="card o-hidden border-0 shadow-lg my-5">
-<div class="card-body p-5">
-<div class="text-center">
-<h1 class="h4 text-gray-900 mb-1"><i class="fas fa-server"></i> Proxmox Panel</h1>
-<p class="text-muted small mb-4">Rust + SB Admin 2 · realtime deployer</p>
+<body>
+<div class="card">
+<div class="logo">
+<div class="icon">🖥️</div>
+<h1>Proxmox Panel</h1>
+<p>Rust + SB Admin 2 · realtime deployer</p>
 </div>
 <form id="form">
-<div class="form-group"><input id="username" class="form-control form-control-user" placeholder="Username" autocomplete="username" value="admin"></div>
-<div class="form-group"><input id="password" type="password" class="form-control form-control-user" placeholder="Password" autocomplete="current-password"></div>
-<div id="err" class="text-danger small mb-2"></div>
-<button class="btn btn-primary btn-user btn-block" type="submit">Login</button>
+<label for="username">Username</label>
+<input id="username" placeholder="Username" autocomplete="username" value="admin">
+<label for="password">Password</label>
+<input id="password" type="password" placeholder="Password" autocomplete="current-password">
+<div id="err"></div>
+<button id="btn" type="submit">Login</button>
 </form>
-<hr>
-<div class="text-center small text-muted">Default: <code>admin / admin123</code> — change it in Settings after login.</div>
-</div>
-</div>
-</div>
-</div>
+<div class="hint">Default: <code>admin / admin123</code> — change it in Settings after login.</div>
 </div>
 <script>
 document.getElementById('form').onsubmit = async (e) => {
   e.preventDefault();
-  const err = document.getElementById('err');
-  err.textContent = '';
+  const err = document.getElementById('err'), btn = document.getElementById('btn');
+  err.textContent = ''; btn.disabled = true; btn.textContent = 'Logging in...';
   try {
     const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({username: document.getElementById('username').value, password: document.getElementById('password').value})});
-    const j = await r.json();
+    const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
     location.href = '/index.html';
   } catch (ex) { err.textContent = String(ex.message || ex); }
+  btn.disabled = false; btn.textContent = 'Login';
 };
 </script>
 </body>

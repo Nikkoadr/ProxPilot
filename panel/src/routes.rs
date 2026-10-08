@@ -1,5 +1,5 @@
 use crate::exec;
-use crate::models::{Cluster, ProxmoxTestRequest, SshTestRequest, TemplateOption};
+use crate::models::{Cluster, ProxmoxTestRequest, SshCopyIdRequest, SshTestRequest, TemplateOption};
 use crate::proxmox::{self, ProxmoxCreds};
 use crate::store::AppState;
 use axum::{
@@ -16,7 +16,7 @@ use std::collections::HashMap;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/clusters", get(list_clusters).post(create_cluster))
-        .route("/api/clusters/:id", delete(delete_cluster))
+        .route("/api/clusters/:id", delete(delete_cluster).put(update_cluster))
         .route("/api/clusters/:id/status", get(cluster_status))
         .route("/api/clusters/:id/deploy", post(deploy_cluster))
         .route("/api/nodes", get(list_nodes))
@@ -26,6 +26,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/realtime/summary", get(summary))
         .route("/api/health/proxmox-test", post(proxmox_test))
         .route("/api/ssh/test", post(ssh_test))
+        .route("/api/ssh/key", get(ssh_key))
+        .route("/api/ssh/keygen", post(ssh_keygen))
+        .route("/api/ssh/copy-id", post(ssh_copy_id))
         .route("/api/ws/logs/:id", get(ws_logs))
         .with_state(state)
 }
@@ -67,6 +70,81 @@ async fn cluster_status(State(s): State<AppState>, Path(id): Path<String>) -> im
 async fn delete_cluster(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     s.db.delete_cluster(&id);
     (StatusCode::OK, Json(json!({"message": "cluster deleted"})))
+}
+
+/// PUT /api/clusters/:id — ubah koneksi/template cluster tanpa hapus.
+/// Dipakai kalau alamat Proxmox / SSH / template berubah.
+/// Field yang dijaga backend: id, status, progress, simulated, created_at.
+/// `token_secret` kosong atau "******" = pakai secret lama.
+async fn update_cluster(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+    Json(payload): Json<Cluster>,
+) -> impl IntoResponse {
+    let mut cur = match s.db.get_cluster(&id) {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"}))).into_response(),
+    };
+    if payload.name.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "Cluster name is required"}))).into_response();
+    }
+    cur.name = payload.name.trim().to_string();
+    cur.proxmox_url = payload.proxmox_url.trim().to_string();
+    cur.proxmox_user = payload.proxmox_user.trim().to_string();
+    if !payload.token_id.trim().is_empty() {
+        cur.token_id = payload.token_id.trim().to_string();
+    }
+    let sec = payload.token_secret.trim().to_string();
+    if !sec.is_empty() && sec != "******" {
+        cur.token_secret = sec;
+    }
+    if !payload.target_node.trim().is_empty() {
+        cur.target_node = payload.target_node.trim().to_string();
+    }
+    if !payload.clone_template.trim().is_empty() {
+        cur.clone_template = payload.clone_template.trim().to_string();
+    }
+    if !payload.network_bridge.trim().is_empty() {
+        cur.network_bridge = payload.network_bridge.trim().to_string();
+    }
+    if !payload.gateway.trim().is_empty() {
+        cur.gateway = payload.gateway.trim().to_string();
+    }
+    if !payload.dns1.trim().is_empty() {
+        cur.dns1 = payload.dns1.trim().to_string();
+    }
+    if !payload.ssh_user.trim().is_empty() {
+        cur.ssh_user = payload.ssh_user.trim().to_string();
+    }
+    cur.ssh_host = payload.ssh_host.trim().to_string();
+    cur.ssh_port = payload.ssh_port;
+    cur.ssh_remote_user = payload.ssh_remote_user.trim().to_string();
+    cur.verify_tls = payload.verify_tls;
+    if payload.master_count >= 1 {
+        cur.master_count = payload.master_count;
+    }
+    if payload.worker_count >= 0 {
+        cur.worker_count = payload.worker_count;
+    }
+    if payload.master_cpu >= 1 {
+        cur.master_cpu = payload.master_cpu;
+    }
+    if payload.master_ram >= 512 {
+        cur.master_ram = payload.master_ram;
+    }
+    if payload.worker_cpu >= 1 {
+        cur.worker_cpu = payload.worker_cpu;
+    }
+    if payload.worker_ram >= 512 {
+        cur.worker_ram = payload.worker_ram;
+    }
+    if !payload.enabled_features.is_empty() {
+        cur.enabled_features = payload.enabled_features.clone();
+    }
+    cur.updated_at = chrono::Utc::now();
+    s.db.save_cluster(&cur);
+    s.push_log(&id, "provision", "Connection settings updated. Re-deploy to apply.", "info");
+    (StatusCode::OK, Json(cur.masked())).into_response()
 }
 
 async fn deploy_cluster(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
@@ -111,6 +189,8 @@ async fn list_templates() -> Json<Value> {
         {"name": "ubuntu-22-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 22.04 LTS Cloud-Init"},
         {"name": "ubuntu-24-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 24.04 LTS Cloud-Init"},
         {"name": "debian-12-cloudinit", "storage": "local", "size": "3GB", "description": "Debian 12 Cloud-Init"},
+        {"name": "rocky-9-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 9 Cloud-Init (user: rocky)"},
+        {"name": "rocky-8-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 8 Cloud-Init (user: rocky)"},
     ]))
 }
 
@@ -221,6 +301,54 @@ async fn ssh_test(Json(req): Json<SshTestRequest>) -> Json<Value> {
     };
     Json(json!({"ok": r.ok, "output": r.output, "ms": r.ms, "via": if via_wsl { "wsl" } else { "native" },
         "keys": keys, "auth_debug": auth_debug}))
+}
+
+/// GET /api/ssh/key — public key host panel (setup sekali, lalu copy ke server).
+async fn ssh_key() -> Json<Value> {
+    let via_wsl = exec::wsl_available();
+    // spawn_blocking: fungsi exec memanggil proses eksternal yang blocking.
+    let key = tokio::task::spawn_blocking(move || exec::ssh_pubkey_get(via_wsl))
+        .await
+        .unwrap_or(None);
+    Json(json!({
+        "exists": key.is_some(),
+        "public_key": key.unwrap_or_default(),
+        "via": if via_wsl { "wsl" } else { "native" },
+    }))
+}
+
+/// POST /api/ssh/keygen — buat key ed25519 kalau belum ada (idempoten).
+async fn ssh_keygen() -> Json<Value> {
+    let via_wsl = exec::wsl_available();
+    let r = tokio::task::spawn_blocking(move || exec::ssh_keygen(via_wsl))
+        .await
+        .unwrap_or(exec::CmdResult { ok: false, output: "keygen task join failed".into(), ms: 0 });
+    Json(json!({"ok": r.ok, "public_key": if r.ok { r.output.clone() } else { String::new() },
+        "output": if r.ok { "ok".to_string() } else { r.output }, "ms": r.ms,
+        "via": if via_wsl { "wsl" } else { "native" }}))
+}
+
+/// POST /api/ssh/copy-id — `ssh-copy-id` dengan password sekali saja.
+/// Password tidak disimpan; tidak pernah masuk log.
+async fn ssh_copy_id(Json(req): Json<SshCopyIdRequest>) -> Json<Value> {
+    if req.ssh_host.trim().is_empty() {
+        return Json(json!({"ok": false, "error": "ssh_host is required"}));
+    }
+    if req.ssh_password.is_empty() {
+        return Json(json!({"ok": false, "error": "ssh_password is required (one-time, never stored)"}));
+    }
+    let via_wsl = exec::wsl_available();
+    let (host, user, port, pw) = (
+        req.ssh_host.clone(),
+        if req.ssh_user.is_empty() { "root".to_string() } else { req.ssh_user.clone() },
+        req.ssh_port,
+        req.ssh_password.clone(),
+    );
+    let r = tokio::task::spawn_blocking(move || exec::ssh_copy_id(&host, &user, port, &pw, via_wsl))
+        .await
+        .unwrap_or(exec::CmdResult { ok: false, output: "copy-id task join failed".into(), ms: 0 });
+    Json(json!({"ok": r.ok, "output": r.output, "ms": r.ms,
+        "via": if via_wsl { "wsl" } else { "native" }}))
 }
 
 // ---------- websocket ----------

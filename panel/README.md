@@ -107,16 +107,32 @@ WSL tanpa systemd: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, l
 - Ubuntu / Debian / WSL + `ansible`, `terraform`, `openssh-client`
 - **Proxmox VE** + API Token: Datacenter → Access → API Tokens (`root@pam!panel`), uncheck *Privilege Separation* kalau mau full.
 
-## SSH key (remote mode, sekali saja)
+## VM template (Ubuntu / Rocky / custom)
 
-```bash
-ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
-ssh-copy-id -p 2902 root@103.156.16.153
-ssh -o BatchMode=yes -p 2902 root@103.156.16.153 'echo ok; pveversion | head -1'
-```
+Pilihan template di form New Cluster berasal dari `GET /api/templates`
+(Ubuntu 22.04/24.04, Debian 12, **Rocky 8/9**) plus opsi **Custom** untuk
+mengetik nama template apa pun yang ada di Proxmox. SSH user VM otomatis
+menyesuaikan (rocky → `rocky`, debian → `admin`, ubuntu → `ubuntu`) tapi
+tetap bisa diubah manual. Template yang sama bisa diganti belakangan via
+kartu Connection di cluster-detail.
 
-Lalu di form New Cluster: centang *Remote mode*, isi SSH host/user/port, klik **Test SSH**.
-Backend menjalankan: `ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@host "..."`.
+Catatan: role Ansible (`ansible/roles/*`) saat ini menarget keluarga Debian
+(`apt`). Untuk Rocky Linux, role `common`/`master`/`worker` perlu adaptasi
+`dnf` + repo Kubernetes EL — Terraform-nya sudah OS-agnostic (tinggal nama
+template).
+
+## SSH key (remote mode, sekali saja — dari panel, tanpa CLI)
+
+Buka **Health & SSH** → kartu *SSH key*:
+
+1. **Generate key** (sekali saja, idempoten — tidak menimpa key lama).
+2. Isi host/user/port + **password sekali saja** → **Salin key ke server**
+   (`ssh-copy-id` via `sshpass`, password tidak disimpan di mana pun).
+3. **Test SSH** harus OK tanpa password.
+
+Butuh `sshpass` di host panel (sudah dipasang otomatis oleh `install.sh`).
+Kalau alamat Proxmox berubah: ubah SSH host/URL di kartu **Connection**
+halaman cluster-detail → Save → Deploy ulang. Tidak perlu hapus cluster.
 
 ## API Endpoints
 
@@ -127,7 +143,11 @@ Backend menjalankan: `ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@host
 | GET | `/api/realtime/summary` | Counter clusters (poll 5s, dashboard) |
 | POST | `/api/health/proxmox-test` | Test Proxmox API Token `{proxmox_url, proxmox_user, token_id, token_secret, verify_tls}` |
 | POST | `/api/ssh/test` | Test SSH `{ssh_host, ssh_user, ssh_port}` (+ diagnosa key saat gagal) |
+| GET | `/api/ssh/key` | Public key host panel `{exists, public_key, via}` — setup sekali |
+| POST | `/api/ssh/keygen` | Generate key ed25519 kalau belum ada (idempoten) |
+| POST | `/api/ssh/copy-id` | `ssh-copy-id` dengan password sekali saja `{ssh_host, ssh_user, ssh_port, ssh_password}` — password tidak disimpan |
 | GET/POST | `/api/clusters` | List / create (wajib `name` + `token_secret`) |
+| PUT | `/api/clusters/:id` | Ubah koneksi/template (URL, SSH, template) tanpa hapus; secret kosong = tetap |
 | GET | `/api/clusters/:id/status` | Status + progress + logs |
 | POST | `/api/clusters/:id/deploy` | Deploy async (background task) |
 | DELETE | `/api/clusters/:id` | Hapus |
