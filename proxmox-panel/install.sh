@@ -93,6 +93,16 @@ echo "==> [5/6] data dir ($DATA_DIR)..."
 $SUDO mkdir -p "$DATA_DIR/infra/terraform"
 if [[ "$(id -u)" -ne 0 ]]; then $SUDO chown -R "$(id -u):$(id -g)" "$DATA_DIR"; fi
 
+echo "==> [5b/6] update command (panel-update)..."
+RAW_BASE="https://raw.githubusercontent.com/$REPO/master/proxmox-panel"
+if curl -fsSL "${AUTH[@]}" -o /tmp/panel-update "$RAW_BASE/update.sh" 2>/dev/null; then
+  $SUDO install -m 0755 /tmp/panel-update /usr/local/bin/panel-update
+  rm -f /tmp/panel-update
+  echo "      installed: panel-update"
+else
+  echo "      skip (update.sh not in repo yet — push dulu file-nya)"
+fi
+
 if [[ "${NO_SERVICE:-0}" == "1" ]]; then
   echo "      NO_SERVICE=1, skipping systemd"
 else

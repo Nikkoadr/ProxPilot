@@ -39,6 +39,18 @@ Token diteruskan ke semua request GitHub (API + download asset). Catatan:
 
 Buka **http://localhost:8080** · login default **`admin / admin123`** → segera ganti di **Settings**.
 
+## Update (di WSL, setelah install)
+
+```bash
+sudo panel-update            # ke Release latest
+sudo panel-update panel-v2.2.0   # ke versi tertentu
+```
+
+Update hanya mengganti binary + restart service — database SQLite (`$DATA_DIR/panel.db`),
+cluster, dan user tidak disentuh. Butuh Release di GitHub (dibuat otomatis oleh CI
+tiap push tag `panel-v*`, atau manual). Tanpa Release yang valid, update gagal
+dengan pesan jelas (bukan setengah jalan).
+
 ## Dev (edit Windows, run WSL)
 
 Edit file di Windows seperti biasa. Build + run selalu di WSL agar binary-nya Linux
