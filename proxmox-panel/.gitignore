@@ -1,10 +1,5 @@
-# Dependencies
-node_modules/
-vendor/
-go.sum
-
 # Build output
-dist/
+target/
 frontend/dist/
 backend/proxmox-panel.exe
 backend/*.exe
@@ -12,7 +7,6 @@ backend/*.exe
 # Environment
 .env
 .env.local
-.env.*.local
 
 # IDE
 .vscode/
@@ -29,16 +23,13 @@ Thumbs.db
 *.log
 logs/
 
-# Terraform state
+# Terraform state (generated)
 *.tfstate
 *.tfstate.backup
 .terraform/
-terraform.tfvars
+infra/terraform/*/
+!infra/terraform/.gitkeep
 
-# Temp files
+# Temp
 *.tmp
 *.temp
-proxmox-panel-data/
-
-# Binary
-*.bin

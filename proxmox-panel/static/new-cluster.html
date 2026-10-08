@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxmox Panel — New Cluster</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/css/custom.css" rel="stylesheet">
+</head>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
+<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
+<li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<span class="conn-pill"><span id="connDot" class="rounded-circle bg-secondary d-inline-block" style="width:10px;height:10px"></span> <span id="connText" class="text-muted">connecting...</span></span>
+</nav>
+<div class="container-fluid">
+<div class="d-sm-flex align-items-center justify-content-between mb-4"><h1 class="h3 mb-0 text-gray-800">New Cluster</h1><a href="/index.html" class="btn btn-sm btn-secondary">← Back</a></div>
+<form id="form">
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Proxmox Connection (API Token)</h6></div>
+<div class="card-body"><div class="form-row">
+<div class="form-group col-md-4"><label>Cluster name *</label><input id="name" class="form-control" placeholder="my-k8s-cluster"></div>
+<div class="form-group col-md-8"><label>Proxmox URL *</label><input id="proxmox_url" class="form-control" value="https://192.168.1.100:8006/api2/json"></div>
+<div class="form-group col-md-4"><label>User</label><input id="proxmox_user" class="form-control" value="root@pam"></div>
+<div class="form-group col-md-4"><label>Token ID * <span class="small text-muted">user@pam!name → isi name</span></label><input id="token_id" class="form-control" placeholder="panel"></div>
+<div class="form-group col-md-4"><label>Token secret *</label><input id="token_secret" type="password" class="form-control" placeholder="paste secret"></div>
+<div class="form-group col-md-4"><label>Target node</label><input id="target_node" class="form-control" value="pve"></div>
+<div class="form-group col-md-4"><label>VM template *</label><select id="clone_template" class="form-control"><option value="">loading...</option></select></div>
+<div class="form-group col-md-4"><label class="d-block">TLS</label><div class="custom-control custom-checkbox"><input type="checkbox" class="custom-control-input" id="verify_tls"><label class="custom-control-label" for="verify_tls">Verify TLS (off = allow self-signed)</label></div></div>
+</div>
+<button type="button" id="btnProxmox" class="btn btn-info btn-sm"><i class="fas fa-plug"></i> Test Proxmox connection</button>
+<pre class="out mt-2" id="proxOut">not tested</pre>
+</div></div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Execution: WSL lokal / SSH remote ke Proxmox</h6></div>
+<div class="card-body">
+<div class="custom-control custom-checkbox mb-2"><input type="checkbox" class="custom-control-input" id="useRemote"><label class="custom-control-label" for="useRemote">Remote mode — jalankan via <code>wsl ssh</code> ke server Proxmox (kalau off: via WSL lokal)</label></div>
+<div class="form-row">
+<div class="form-group col-md-6"><label>SSH host (Proxmox server)</label><input id="ssh_host" class="form-control" placeholder="192.168.1.100"></div>
+<div class="form-group col-md-4"><label>SSH user (remote)</label><input id="ssh_user_remote" class="form-control" value="root"></div>
+<div class="form-group col-md-2"><label>Port</label><input id="ssh_port" type="number" class="form-control" value="22"></div>
+</div>
+<button type="button" id="btnSsh" class="btn btn-info btn-sm"><i class="fas fa-terminal"></i> Test SSH via WSL</button>
+<pre class="out mt-2" id="sshOut">not tested — butuh key ~/.ssh di WSL + authorized_keys di Proxmox</pre>
+</div></div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Network &amp; Nodes</h6></div>
+<div class="card-body"><div class="form-row">
+<div class="form-group col-md-3"><label>Bridge</label><input id="network_bridge" class="form-control" value="vmbr0"></div>
+<div class="form-group col-md-3"><label>Gateway</label><input id="gateway" class="form-control" value="192.168.1.1"></div>
+<div class="form-group col-md-3"><label>DNS</label><input id="dns1" class="form-control" value="8.8.8.8"></div>
+<div class="form-group col-md-3"><label>SSH user (VM)</label><input id="ssh_user_vm" class="form-control" value="ubuntu" oninput="document.getElementById('ssh_user').value=this.value"></div>
+<div class="form-group col-md-2"><label>Masters</label><input id="master_count" type="number" class="form-control" value="1" min="1" max="3"></div>
+<div class="form-group col-md-2"><label>Master CPU</label><input id="master_cpu" type="number" class="form-control" value="4"></div>
+<div class="form-group col-md-2"><label>Master RAM MB</label><input id="master_ram" type="number" class="form-control" value="8192"></div>
+<div class="form-group col-md-2"><label>Workers</label><input id="worker_count" type="number" class="form-control" value="2"></div>
+<div class="form-group col-md-2"><label>Worker CPU</label><input id="worker_cpu" type="number" class="form-control" value="2"></div>
+<div class="form-group col-md-2"><label>Worker RAM MB</label><input id="worker_ram" type="number" class="form-control" value="4096"></div>
+</div></div></div>
+<div id="err" class="text-danger mb-2"></div>
+<button class="btn btn-primary" type="submit"><i class="fas fa-rocket"></i> Create &amp; Deploy</button>
+<a href="/index.html" class="btn btn-secondary">Cancel</a>
+</form>
+<br>
+</div>
+</div>
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>Token: Proxmox → Datacenter → Access → API Tokens. SSH: key di WSL (<code>ssh-keygen</code> + <code>ssh-copy-id</code>).</span></div></div></footer>
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.3/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/js/sb-admin-2.min.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/new-cluster.js"></script>
+</body>
+</html>

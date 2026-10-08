@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxmox Panel — Settings</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/css/custom.css" rel="stylesheet">
+</head>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
+<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
+<li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<li class="nav-item" id="nav-settings"><a class="nav-link" href="/settings.html"><i class="fas fa-cog"></i><span>Settings</span></a></li>
+<hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<span class="conn-pill"><span id="connDot" class="rounded-circle bg-secondary d-inline-block" style="width:10px;height:10px"></span> <span id="connText" class="text-muted">connecting...</span></span>
+</nav>
+<div class="container-fluid">
+<h1 class="h3 mb-4 text-gray-800">Settings</h1>
+<div class="row">
+<div class="col-lg-6">
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Account</h6></div>
+<div class="card-body">
+<p>Logged in as <strong id="meUser">...</strong> <span id="defBadge"></span></p>
+<form id="pwform">
+<div class="form-group"><label>Old password</label><input id="oldpw" type="password" class="form-control" autocomplete="current-password"></div>
+<div class="form-group"><label>New password (min 6 chars)</label><input id="newpw" type="password" class="form-control" autocomplete="new-password"></div>
+<div id="err" class="text-danger small mb-2"></div>
+<div id="okmsg" class="text-success small mb-2"></div>
+<button class="btn btn-primary btn-sm" type="submit">Change password</button>
+</form>
+<p class="small text-muted mt-3">After change you will be logged out everywhere and must login again.</p>
+</div></div>
+</div>
+<div class="col-lg-6">
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Storage</h6></div>
+<div class="card-body small text-muted">
+Clusters, logs, and users persist in SQLite (<code>$PANEL_DATA/panel.db</code>, default <code>./data/panel.db</code>). Restart-safe: interrupted deploys are marked <code>error</code> on boot.
+</div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.3/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/js/sb-admin-2.min.js"></script>
+<script src="/js/app.js"></script>
+<script>
+document.getElementById('pwform').onsubmit = async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err'), okm = document.getElementById('okmsg');
+  err.textContent = ''; okm.textContent = '';
+  try {
+    const r = await fetch('/api/user/password', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({old_password: document.getElementById('oldpw').value, new_password: document.getElementById('newpw').value})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    okm.textContent = j.message || 'changed';
+    setTimeout(() => location.href = '/login.html', 1200);
+  } catch (ex) { err.textContent = String(ex.message || ex); }
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxmox Panel — Health &amp; SSH</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/css/custom.css" rel="stylesheet">
+</head>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
+<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
+<li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<span class="conn-pill"><span id="connDot" class="rounded-circle bg-secondary d-inline-block" style="width:10px;height:10px"></span> <span id="connText" class="text-muted">connecting...</span></span>
+</nav>
+<div class="container-fluid">
+<h1 class="h3 mb-4 text-gray-800">Health &amp; Connections <span class="small text-muted">(auto-refresh 10s)</span></h1>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">WSL + Tools (lokal &amp; dalam WSL)</h6></div>
+<div class="card-body">
+<div>WSL: <span id="wslState">...</span></div>
+<pre class="out" id="wslDistros">...</pre>
+<div class="mt-2 small">Terraform lokal: <span id="TfLocal"></span></div>
+<div class="small">Terraform WSL: <span id="TfWsl"></span></div>
+<div class="mt-2 small">Ansible lokal: <span id="AnLocal"></span></div>
+<div class="small">Ansible WSL: <span id="AnWsl"></span></div>
+<div class="mt-2 small">SSH lokal: <span id="SshLocal"></span></div>
+<div class="small">SSH WSL: <span id="SshWsl"></span></div>
+</div></div>
+<div class="row">
+<div class="col-lg-6"><div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Proxmox API test (API Token)</h6></div>
+<div class="card-body">
+<div class="form-group"><label>URL</label><input id="pUrl" class="form-control" value="https://192.168.1.100:8006/api2/json"></div>
+<div class="form-row"><div class="form-group col-6"><label>User</label><input id="pUser" class="form-control" value="root@pam"></div>
+<div class="form-group col-6"><label>Token ID</label><input id="pTokenId" class="form-control" placeholder="panel"></div></div>
+<div class="form-group"><label>Token secret</label><input id="pTokenSecret" type="password" class="form-control"></div>
+<div class="custom-control custom-checkbox mb-2"><input type="checkbox" class="custom-control-input" id="pVerify"><label class="custom-control-label" for="pVerify">Verify TLS</label></div>
+<button id="btnProx" class="btn btn-info btn-sm">Test Proxmox</button>
+<pre class="out mt-2" id="proxOut">not tested</pre>
+</div></div></div>
+<div class="col-lg-6"><div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">SSH via WSL ke Proxmox</h6></div>
+<div class="card-body">
+<div class="form-group"><label>SSH host</label><input id="sHost" class="form-control" placeholder="192.168.1.100"></div>
+<div class="form-row"><div class="form-group col-8"><label>SSH user</label><input id="sUser" class="form-control" value="root"></div>
+<div class="form-group col-4"><label>Port</label><input id="sPort" type="number" class="form-control" value="22"></div></div>
+<button id="btnSsh" class="btn btn-info btn-sm">Test SSH via WSL</button>
+<pre class="out mt-2" id="sshOut">not tested</pre>
+<div class="small text-muted mt-2">Di WSL: <code>ssh-keygen && ssh-copy-id root@&lt;proxmox&gt;</code>. Backend menjalankan <code>wsl ssh -o BatchMode=yes ...</code> jadi tanpa password.</div>
+</div></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.3/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/js/sb-admin-2.min.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/health.js"></script>
+</body>
+</html>

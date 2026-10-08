@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxmox Panel — Login</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+</head>
+<body class="bg-gradient-primary">
+<div class="container">
+<div class="row justify-content-center">
+<div class="col-xl-5 col-lg-6 col-md-8">
+<div class="card o-hidden border-0 shadow-lg my-5">
+<div class="card-body p-5">
+<div class="text-center">
+<h1 class="h4 text-gray-900 mb-1"><i class="fas fa-server"></i> Proxmox Panel</h1>
+<p class="text-muted small mb-4">Rust + SB Admin 2 · realtime deployer</p>
+</div>
+<form id="form">
+<div class="form-group"><input id="username" class="form-control form-control-user" placeholder="Username" autocomplete="username" value="admin"></div>
+<div class="form-group"><input id="password" type="password" class="form-control form-control-user" placeholder="Password" autocomplete="current-password"></div>
+<div id="err" class="text-danger small mb-2"></div>
+<button class="btn btn-primary btn-user btn-block" type="submit">Login</button>
+</form>
+<hr>
+<div class="text-center small text-muted">Default: <code>admin / admin123</code> — change it in Settings after login.</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script>
+document.getElementById('form').onsubmit = async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('err');
+  err.textContent = '';
+  try {
+    const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username: document.getElementById('username').value, password: document.getElementById('password').value})});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    location.href = '/index.html';
+  } catch (ex) { err.textContent = String(ex.message || ex); }
+};
+</script>
+</body>
+</html>

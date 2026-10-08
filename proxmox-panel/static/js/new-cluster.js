@@ -1,0 +1,73 @@
+async function init(){
+  try{const c=await apiGet('/api/config');fill(c.defaults||{});}catch(e){}
+  try{const t=await apiGet('/api/templates');fillTemplates(t);}catch(e){}
+  document.getElementById('btnProxmox').onclick=testProxmox;
+  document.getElementById('btnSsh').onclick=testSsh;
+  document.getElementById('form').onsubmit=submit;
+  document.getElementById('useRemote').onchange=toggleRemote;
+  toggleRemote();
+}
+function val(id){const el=document.getElementById(id);return el?el.value.trim():'';}
+function num(id,d){const el=document.getElementById(id);const v=el?parseInt(el.value,10):NaN;return isNaN(v)?d:v;}
+function fill(d){
+  const set=(id,v)=>{const el=document.getElementById(id);if(el&&el.value===''&&v!=null)el.value=v;};
+  set('proxmox_url',d.proxmox_url);set('proxmox_user',d.proxmox_user);
+  set('master_cpu',d.master_cpu);set('master_ram',d.master_ram);
+  set('worker_cpu',d.worker_cpu);set('worker_ram',d.worker_ram);
+}
+function fillTemplates(t){
+  const s=document.getElementById('clone_template');
+  s.innerHTML='<option value="">Select template...</option>'+(t||[]).map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${esc(x.size||'')})</option>`).join('');
+}
+function toggleRemote(){
+  const on=document.getElementById('useRemote').checked;
+  ['ssh_host','ssh_user_remote','ssh_port'].forEach(id=>{const el=document.getElementById(id);if(el)el.disabled=!on;});
+}
+function proxmoxPayload(){
+  return {proxmox_url:val('proxmox_url'),proxmox_user:val('proxmox_user')||'root@pam',
+    token_id:val('token_id'),token_secret:document.getElementById('token_secret').value,
+    verify_tls:document.getElementById('verify_tls').checked};
+}
+async function testProxmox(){
+  const out=document.getElementById('proxOut');
+  out.textContent='testing...';
+  try{const r=await apiPost('/api/health/proxmox-test',proxmoxPayload());
+    out.textContent=JSON.stringify(r,null,2);
+    out.className='out '+(r.ok?'border-left-success':'border-left-danger');
+  }catch(e){out.textContent=String(e);}
+}
+async function testSsh(){
+  const out=document.getElementById('sshOut');
+  out.textContent='testing via WSL ssh...';
+  try{const r=await apiPost('/api/ssh/test',{ssh_host:val('ssh_host'),ssh_user:val('ssh_user_remote')||'root',ssh_port:num('ssh_port',22)});
+    out.textContent=JSON.stringify(r,null,2);
+  }catch(e){out.textContent=String(e);}
+}
+async function submit(e){
+  e.preventDefault();
+  const err=document.getElementById('err');
+  err.textContent='';
+  const useRemote=document.getElementById('useRemote').checked;
+  const body={
+    id:'',name:val('name'),proxmox_url:val('proxmox_url'),proxmox_user:val('proxmox_user')||'root@pam',
+    token_id:val('token_id'),token_secret:document.getElementById('token_secret').value,
+    verify_tls:document.getElementById('verify_tls').checked,
+    target_node:val('target_node')||'pve',clone_template:val('clone_template'),
+    network_bridge:val('network_bridge')||'vmbr0',gateway:val('gateway')||'192.168.1.1',dns1:val('dns1')||'8.8.8.8',
+    master_count:num('master_count',1),master_cpu:num('master_cpu',4),master_ram:num('master_ram',8192),
+    worker_count:num('worker_count',2),worker_cpu:num('worker_cpu',2),worker_ram:num('worker_ram',4096),
+    ssh_user:val('ssh_user_vm')||'ubuntu',ssh_public_key:'',
+    ssh_host:useRemote?val('ssh_host'):'',ssh_port:num('ssh_port',22),
+    ssh_remote_user:useRemote?(val('ssh_user_remote')||'root'):'',
+    use_wsl:true,status:'pending',progress:0,
+    enabled_features:['k8s','nginx'],created_at:new Date().toISOString(),updated_at:new Date().toISOString()
+  };
+  if(!body.name){err.textContent='Cluster name required';return;}
+  if(!body.token_secret){err.textContent='API Token secret required';return;}
+  if(!body.clone_template){err.textContent='Select a template';return;}
+  try{
+    const c=await apiPost('/api/clusters',body);
+    location.href='/cluster-detail.html?id='+encodeURIComponent(c.id);
+  }catch(e){err.textContent=String(e);}
+}
+document.addEventListener('DOMContentLoaded',init);
