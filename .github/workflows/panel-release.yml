@@ -22,7 +22,13 @@ jobs:
       - name: Build release
         run: cargo build --release
 
+      # Gagal berisik kalau binary tidak ada (bukan hijau palsu).
+      - name: Verify binary
+        run: ls -lh target/release/proxmox-panel && file target/release/proxmox-panel
+
+      # gh langsung (preinstalled di runner): gagal berisik kalau file hilang,
+      # --clobber menimpa asset saat re-run.
       - name: Upload asset to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: panel/target/release/proxmox-panel#proxmox-panel-linux-x86_64
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" target/release/proxmox-panel#proxmox-panel-linux-x86_64 --clobber
