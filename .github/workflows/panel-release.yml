@@ -28,7 +28,11 @@ jobs:
 
       # gh langsung (preinstalled di runner): gagal berisik kalau file hilang,
       # --clobber menimpa asset saat re-run.
+      # Catatan: `file#nama` di gh hanya mengisi LABEL, bukan nama asset —
+      # jadi rename via cp dulu agar browser_download_url benar.
       - name: Upload asset to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.ref_name }}" target/release/proxmox-panel#proxmox-panel-linux-x86_64 --clobber
+        run: |
+          cp target/release/proxmox-panel ./proxmox-panel-linux-x86_64
+          gh release upload "${{ github.ref_name }}" ./proxmox-panel-linux-x86_64 --clobber

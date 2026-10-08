@@ -499,10 +499,6 @@ pub fn runtime_info_cached(wsl: bool) -> serde_json::Value {
     serde_json::json!({"mode": "windows-native", "label": "Windows native (tanpa WSL)", "primary": "local"})
 }
 
-pub fn runtime_info() -> serde_json::Value {
-    runtime_info_cached(wsl_available())
-}
-
 /// Ringkasan tools untuk /api/tools.
 pub fn tools_summary() -> serde_json::Value {
     let wsl = wsl_available();
