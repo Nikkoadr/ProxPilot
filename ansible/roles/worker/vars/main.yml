@@ -1,0 +1,3 @@
+---
+join_token_ttl: "0"
+kubelet_version: "1.30.0"

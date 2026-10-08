@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes Cluster Ready</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+        }
+        .container { text-align: center; padding: 40px; }
+        h1 { font-size: 3rem; margin-bottom: 20px; }
+        .subtitle { font-size: 1.2rem; color: #a0aec0; margin-bottom: 40px; }
+        .card-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 24px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .card h3 { font-size: 1.1rem; margin-bottom: 8px; }
+        .card p { color: #a0aec0; font-size: 0.9rem; }
+        .status-dot {
+            display: inline-block;
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: #48bb78;
+            margin-right: 6px;
+        }
+        .footer { margin-top: 40px; color: #718096; font-size: 0.85rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Kubernetes Cluster</h1>
+        <p class="subtitle">Cluster provisioning completed successfully</p>
+        <div class="card-grid">
+            <div class="card">
+                <h3><span class="status-dot"></span>Master Node</h3>
+                <p>k8s-master<br>4 vCPU / 8GB RAM</p>
+            </div>
+            <div class="card">
+                <h3><span class="status-dot"></span>Worker Node 1</h3>
+                <p>k8s-worker1<br>2 vCPU / 4GB RAM</p>
+            </div>
+            <div class="card">
+                <h3><span class="status-dot"></span>Worker Node 2</h3>
+                <p>k8s-worker2<br>2 vCPU / 4GB RAM</p>
+            </div>
+        </div>
+        <p class="footer">Powered by Proxmox + Terraform + Ansible</p>
+    </div>
+</body>
+</html>

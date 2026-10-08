@@ -1,0 +1,9 @@
+---
+- name: Kubernetes Worker setup
+  hosts: k8s_workers
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - common
+    - worker

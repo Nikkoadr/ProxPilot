@@ -1,0 +1,9 @@
+---
+- name: Nginx Landing Page setup
+  hosts: nginx_group
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - common
+    - nginx

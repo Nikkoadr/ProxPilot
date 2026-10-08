@@ -1,0 +1,62 @@
+---
+- name: Initialize Kubernetes cluster
+  command: kubeadm init --pod-network-cidr=10.244.0.0/16 --token-ttl=0
+  register: kubeadm_init
+  become: yes
+  when: inventory_hostname == 'master'
+
+- name: Create .kube directory
+  file:
+    path: /home/ubuntu/.kube
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  become: yes
+  when: inventory_hostname == 'master'
+
+- name: Copy admin.conf to user kube config
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: /home/ubuntu/.kube/config
+    remote_src: yes
+    owner: ubuntu
+    group: ubuntu
+    mode: '0644'
+  when: inventory_hostname == 'master'
+
+- name: Install Calico CNI
+  command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+  become: yes
+  when: inventory_hostname == 'master'
+
+- name: Get join command
+  command: kubeadm token create --print-join-command
+  register: join_command
+  become: yes
+  when: inventory_hostname == 'master'
+
+- name: Store join command
+  set_fact:
+    k8s_join_command: "{{ join_command.stdout }}"
+  when: inventory_hostname == 'master'
+
+- name: Save join command to file
+  copy:
+    content: "{{ k8s_join_command }}"
+    dest: /tmp/join-command.sh
+    owner: root
+    group: root
+    mode: '0644'
+  delegate_to: master
+  run_once: yes
+  when: inventory_hostname == 'master'
+
+- name: Fetch join command to localhost
+  fetch:
+    src: /tmp/join-command.sh
+    dest: /tmp/join-command-{{ inventory_hostname }}.sh
+    flat: yes
+  delegate_to: master
+  run_once: yes
+  ignore_errors: yes

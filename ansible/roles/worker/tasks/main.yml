@@ -1,0 +1,9 @@
+---
+- name: Join worker to cluster
+  command: "/bin/bash /tmp/join-command.sh"
+  become: yes
+  delegate_to: master
+  run_once: yes
+  when:
+    - ansible_hostname != 'master'
+    - lookup('file', '/tmp/join-command-k8s-master.sh', errors='strict') is defined

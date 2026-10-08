@@ -1,0 +1,5 @@
+---
+k8s_version: "1.30.0"
+pod_network_cidr: "10.244.0.0/16"
+cluster_name: "k8s-cluster"
+dns_service: "coredns"

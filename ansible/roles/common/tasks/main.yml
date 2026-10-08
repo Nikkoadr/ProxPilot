@@ -1,0 +1,75 @@
+---
+- name: Install Docker
+  block:
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+- name: Install Kubeadm, Kubelet, Kubectl
+  block:
+    - name: Add Kubernetes GPG key
+      apt_key:
+        url: https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key
+        state: present
+
+    - name: Add Kubernetes repository
+      apt_repository:
+        repo: deb https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
+        state: present
+
+    - name: Install kubelet kubeadm kubectl
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        update_cache: yes
+
+    - name: Hold kubelet and kubeadm
+      dpkg_selection:
+        name: kubelet
+        selection: hold
+      ignore_errors: yes
+
+    - name: Hold kubectl
+      dpkg_selection:
+        name: kubectl
+        selection: hold
+      ignore_errors: yes
+
+    - name: Start and enable kubelet
+      systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+        daemon_reload: yes

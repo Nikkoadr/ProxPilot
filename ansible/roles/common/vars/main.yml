@@ -1,0 +1,4 @@
+---
+docker_version: "5:24.0.7-1~ubuntu.22.04~jammy"
+kubernetes_version: "1.30.0-1.1"
+calico_version: "v3.27.0"

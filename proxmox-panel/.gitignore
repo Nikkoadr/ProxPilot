@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+vendor/
+go.sum
+
+# Build output
+dist/
+frontend/dist/
+backend/proxmox-panel.exe
+backend/*.exe
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Terraform state
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfvars
+
+# Temp files
+*.tmp
+*.temp
+proxmox-panel-data/
+
+# Binary
+*.bin
