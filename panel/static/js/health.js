@@ -22,6 +22,13 @@ async function loadTools(){
     row('TfLocal',t.terraform?.local);row('TfWsl',t.terraform?.wsl);
     row('AnLocal',t.ansible?.local);row('AnWsl',t.ansible?.wsl);
     row('SshLocal',t.ssh?.local);row('SshWsl',t.ssh?.wsl);
+    // Mode native (WSL2/VM Linux): baris WSL pasti FAIL ("unavailable") —
+    // sembunyikan agar tidak dikira rusak. Tool lokal yang dipakai.
+    const native=(rt.primary==='local');
+    ['TfWsl','AnWsl','SshWsl'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el&&el.parentElement)el.parentElement.style.display=native?'none':'';
+    });
   }catch(e){console.warn(e);}
 }
 function row(id,o){
