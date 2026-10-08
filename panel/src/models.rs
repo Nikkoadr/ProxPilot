@@ -67,6 +67,10 @@ pub struct Cluster {
     pub status: String,
     #[serde(default)]
     pub progress: i32,
+    /// True when the last deploy finished without real provisioning
+    /// (Proxmox unreachable or tools missing). Shown as a badge in UI.
+    #[serde(default)]
+    pub simulated: bool,
     #[serde(default = "now_utc")]
     pub created_at: DateTime<Utc>,
     #[serde(default = "now_utc")]

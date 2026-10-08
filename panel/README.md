@@ -11,14 +11,14 @@ storage **SQLite**, login **admin + password (dapat diubah)**.
 ## Install 1 perintah (WSL / Ubuntu / Debian)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ProxPilot/master/panel/install.sh | bash
 ```
 
 Itu saja — script menginstall **rust +** ansible + terraform + openssh/sqlite3, generate SSH key,
 lalu pasang binary (dari GitHub Release, atau **build dari source otomatis** kalau Release belum ada),
 dan pasang systemd service (restart otomatis).
 
-Env opsional: `PANEL_REPO=Nikkoadr/ansible PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
+Env opsional: `PANEL_REPO=Nikkoadr/ProxPilot PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
 
 ### Repo private (butuh token)
 
@@ -27,7 +27,7 @@ customer harus menyertakan Personal Access Token (classic, scope **`repo`**):
 
 ```bash
 curl -fsSL -H "Authorization: Bearer ghp_XXXX" \
-  https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh \
+  https://raw.githubusercontent.com/Nikkoadr/ProxPilot/master/panel/install.sh \
   | GITHUB_TOKEN=ghp_XXXX bash
 ```
 
@@ -63,7 +63,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source ~/.cargo/env
 
 # tiap kali mau jalan:
-cd /mnt/d/laragon/www/ansible/proxmox-panel   # sesuaikan path repo
+cd /mnt/d/laragon/www/ProxPilot/panel   # sesuaikan path repo
 ./start.sh        # PORT=8080 PANEL_DATA=./data cargo run
 ```
 
@@ -80,9 +80,9 @@ git push origin panel-v2.1.0
 **B. Manual** — build di WSL lalu upload:
 
 ```bash
-cd /mnt/d/laragon/www/ansible/proxmox-panel
+cd /mnt/d/laragon/www/ProxPilot/panel
 cargo build --release
-gh release create panel-v2.1.0 target-linux/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ansible
+gh release create panel-v2.1.0 target-linux/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ProxPilot
 ```
 
 `install.sh` mengambil Release `latest` secara default (`PANEL_VERSION` untuk pin versi,
@@ -139,20 +139,22 @@ Backend menjalankan: `ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@host
 ## Flow Deployment
 
 1. Isi form (token + target node + template) → **Test Proxmox** harus OK.
-2. Pilih mode: kosongkan SSH host = **eksekusi lokal**; isi SSH host = **remote via `ssh`**.
+2. Pilih mode: kosongkan SSH host = **eksekusi lokal**; isi SSH host = **remote via `ssh`** (transport otomatis: native di Linux, WSL-bridge di Windows).
 3. Create → Deploy → backend:
-   - test Proxmox `/version` (live),
-   - tulis `infra/terraform/<id>/{main.tf, terraform.tfvars (redacted), inventory.ini}`,
-   - lokal: cek tools + `terraform init -backend=false` (proof, non-destruktif),
-   - remote: test SSH + cek `terraform/ansible --version` di server,
-   - fase K8s (kubeadm, Calico, Nginx) sebagai log progres,
-   - status `running` 100%.
+   - test Proxmox `/version` (live) — gagal = deploy **dibatalkan** dengan status `error` (tidak ada sukses palsu),
+   - tulis `$PANEL_DATA/infra/terraform/<id>/{main.tf, terraform.tfvars (0600, secret asli), inventory.ini, deploy-remote.sh}`,
+   - lokal: `terraform init` + `terraform apply -auto-approve` di host ini,
+   - remote: `scp -r` direktori cluster ke `/tmp/proxmox-panel/<id>/` lalu `terraform init + apply` di server,
+   - sukses apply → status `running` 100% + perintah ansible lanjutan di log.
 4. Log mengalir realtime ke `cluster-detail.html` via WS; kalau WS putus, polling 3s backup.
+5. Kubernetes **tidak** diinstal otomatis (fase kubeadm/Calico palsu sudah dihapus) — jalankan playbook dari repo root dengan `inventory.ini` hasil generate:
+   `ansible-playbook -i $PANEL_DATA/infra/terraform/<id>/inventory.ini ansible/playbook-master.yml` (lalu workers, nginx).
+   Isi `ansible_host` tiap node dari `terraform output` (IP DHCP) terlebih dahulu.
 
 ## Struktur
 
 ```
-proxmox-panel/
+panel/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs      # Axum + static + login guard
@@ -164,7 +166,7 @@ proxmox-panel/
 │   ├── proxmox.rs   # PVEAPIToken client, /version, /nodes
 │   └── exec.rs      # exec lokal, ssh, tools_summary + diagnosa auth
 ├── static/          # SB Admin 2 (CDN): login, index, new-cluster, cluster-detail, health, settings + js/
-├── infra/terraform/ # generated per-cluster (gitignored)
+├── infra/terraform/ # generated per-cluster, dev fallback (prod: $PANEL_DATA/infra, gitignored)
 ├── data/            # panel.db SQLite (gitignored, via PANEL_DATA)
 ├── install.sh       # one-line installer (apt deps + key + binary + systemd)
 ├── start.sh / Makefile

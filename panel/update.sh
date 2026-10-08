@@ -3,7 +3,7 @@
 # Usage: sudo panel-update [latest|panel-vX.Y.Z]   (default: latest)
 set -euo pipefail
 
-REPO="${PANEL_REPO:-Nikkoadr/ansible}"
+REPO="${PANEL_REPO:-Nikkoadr/ProxPilot}"
 VERSION="${1:-${PANEL_VERSION:-latest}}"
 BIN="/usr/local/bin/proxmox-panel"
 SERVICE="proxmox-panel"
@@ -36,6 +36,24 @@ if ! curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"; then
 fi
 $SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
 rm -f /tmp/proxmox-panel
+
+echo "Refreshing static files..."
+STATIC_DST="/usr/share/proxmox-panel/static"
+CLONE_URL="https://github.com/$REPO.git"
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  CLONE_URL="https://oauth2:${GITHUB_TOKEN}@github.com/$REPO.git"
+fi
+rm -rf /tmp/panel-static
+if git clone --depth 1 --branch master --filter=blob:none --sparse "$CLONE_URL" /tmp/panel-static 2>/dev/null \
+  && (cd /tmp/panel-static && git sparse-checkout set panel/static 2>/dev/null); then
+  $SUDO mkdir -p "$STATIC_DST"
+  $SUDO cp -r /tmp/panel-static/panel/static/. "$STATIC_DST/"
+  rm -rf /tmp/panel-static
+  echo "static: refreshed ($TAG)"
+else
+  rm -rf /tmp/panel-static
+  echo "WARNING: static files NOT refreshed (clone failed) — UI may be stale." >&2
+fi
 
 if [[ "$(ps -p 1 -o comm= 2>/dev/null)" == "systemd" ]]; then
   $SUDO systemctl restart "$SERVICE"

@@ -22,12 +22,12 @@ async fn main() {
         .init();
 
     let base = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    let infra_dir = base.join("infra").to_string_lossy().to_string();
+    let (infra_dir, static_dir) = resolve_dirs(&base);
     std::fs::create_dir_all(format!("{infra_dir}/terraform")).ok();
 
     let database = db::Db::open().expect("open sqlite db");
     auth::ensure_seed(database.clone()).await;
-    let state = store::AppState::new(database, infra_dir);
+    let state = store::AppState::new(database, infra_dir, static_dir);
 
     // Public: login + liveness (for service checks).
     let public = Router::new()
@@ -75,6 +75,41 @@ async fn main() {
     axum::serve(listener, app).await.expect("serve");
 }
 
+/// Resolve runtime dirs so the binary works regardless of cwd
+/// (dev run from `panel/`, systemd with WorkingDirectory, etc.).
+/// Env overrides: PANEL_INFRA, PANEL_STATIC. Infra defaults to
+/// `$PANEL_DATA/infra` so generated terraform lives next to the DB.
+fn resolve_dirs(base: &std::path::Path) -> (String, String) {
+    let data_dir =
+        std::env::var("PANEL_DATA").unwrap_or_else(|_| "data".to_string());
+    let infra_dir = std::env::var("PANEL_INFRA").unwrap_or_else(|_| {
+        if std::path::Path::new(&data_dir).is_absolute() {
+            format!("{data_dir}/infra")
+        } else {
+            base.join(&data_dir)
+                .join("infra")
+                .to_string_lossy()
+                .to_string()
+        }
+    });
+    let static_dir = std::env::var("PANEL_STATIC").unwrap_or_else(|_| {
+        for cand in [
+            base.join("static")
+                .to_string_lossy()
+                .to_string(),
+            "/usr/share/proxmox-panel/static".to_string(),
+        ] {
+            if std::path::Path::new(&cand).join("login.html").exists() {
+                return cand;
+            }
+        }
+        base.join("static").to_string_lossy().to_string()
+    });
+    tracing::info!("infra_dir: {infra_dir}");
+    tracing::info!("static_dir: {static_dir}");
+    (infra_dir, static_dir)
+}
+
 async fn health_open() -> impl IntoResponse {
     let wsl = exec::wsl_available();
     axum::Json(serde_json::json!({
@@ -110,16 +145,25 @@ async fn serve_spa(
             })
             .unwrap_or(false);
         if !logged_in {
-            let body = tokio::fs::read("static/login.html").await.unwrap_or_else(|_| b"<h1>login</h1>".to_vec());
+            let login_path = format!("{}/login.html", state.static_dir);
+            let body = tokio::fs::read(&login_path).await.unwrap_or_else(|_| b"<h1>login</h1>".to_vec());
             return Ok(Response::builder()
                 .header("content-type", "text/html")
                 .body(axum::body::Body::from(body))
                 .unwrap());
         }
     }
-    // fall through to ServeDir for the actual file
+    // fall through to the static dir for the actual file.
+    // Block path traversal: `/../secret` must never escape static_dir.
     let svc_path = if path == "/" { "/index.html".to_string() } else { path };
-    let body = tokio::fs::read(format!("static{svc_path}")).await;
+    let rel = svc_path.trim_start_matches('/').replace('\\', "/");
+    if rel.split('/').any(|seg| seg == "..") {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(axum::body::Body::from("not found"))
+            .unwrap());
+    }
+    let body = tokio::fs::read(format!("{}/{}", state.static_dir, rel)).await;
     match body {
         Ok(b) => {
             let ct = if svc_path.ends_with(".html") {

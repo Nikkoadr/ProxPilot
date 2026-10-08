@@ -11,6 +11,13 @@ function render(data){
   const b=document.getElementById('cStatus');
   b.className='badge badge-'+badgeFor(data.status);
   b.textContent=data.status;
+  let sim=document.getElementById('cSim');
+  if(data.simulated){
+    if(!sim){sim=document.createElement('span');sim.id='cSim';b.after(sim);}
+    sim.className='badge badge-warning ml-1';
+    sim.title='Last deploy did not provision real VMs — see logs';
+    sim.textContent='simulated';
+  } else if(sim){sim.remove();}
   const bar=document.getElementById('cBar');
   bar.style.width=(data.progress||0)+'%';bar.textContent=(data.progress||0)+'%';
   document.getElementById('cProg').style.display=(data.status==='deploying'||data.status==='provisioning')?'':'none';

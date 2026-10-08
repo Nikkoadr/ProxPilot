@@ -8,7 +8,7 @@ proxmox_password = ""
 
 vm_start_on_create = true
 ssh_user = "ubuntu"
-ssh_private_key = "~/.ssh/id_rsa"
+ssh_public_key = "~/.ssh/id_ed25519.pub"
 
 # Template Ubuntu cloud-init di Proxmox
-clone_template = "ubuntu-22-04-template"
+clone_template = "ubuntu-22-04-cloudinit"

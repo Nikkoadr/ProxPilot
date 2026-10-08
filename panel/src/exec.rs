@@ -184,6 +184,70 @@ pub fn ssh_exec_native(host: &str, user: &str, port: u16, remote_cmd: &str) -> C
     )
 }
 
+/// SSH test that picks the right transport: native on Linux, WSL-bridged
+/// when the binary runs on Windows. (Old code always used the WSL path,
+/// which breaks remote deploy on a real Linux server.)
+pub fn ssh_test_auto(host: &str, user: &str, port: u16, via_wsl: bool) -> CmdResult {
+    if via_wsl {
+        ssh_test_via_wsl(host, user, port)
+    } else {
+        ssh_test_native(host, user, port)
+    }
+}
+
+/// Remote command exec with the same transport auto-pick.
+pub fn ssh_exec_auto(host: &str, user: &str, port: u16, remote_cmd: &str, via_wsl: bool) -> CmdResult {
+    if via_wsl {
+        ssh_exec_via_wsl(host, user, port, remote_cmd)
+    } else {
+        ssh_exec_native(host, user, port, remote_cmd)
+    }
+}
+
+/// Copy a local dir to the Proxmox server (`scp -r`).
+/// When `via_wsl` is true, `local` must already be a WSL-style path
+/// (caller converts with win->/mnt/... mapping).
+pub fn scp_to_remote(
+    host: &str,
+    user: &str,
+    port: u16,
+    local: &str,
+    remote: &str,
+    via_wsl: bool,
+) -> CmdResult {
+    let port_s = port.to_string();
+    if via_wsl {
+        let cmd = format!(
+            "scp -P {} -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new -r {} {}@{}:{} 2>&1",
+            port_s,
+            shell_word(local),
+            shell_word(user),
+            shell_word(host),
+            shell_word(remote)
+        );
+        run_in_wsl(&cmd)
+    } else {
+        let target = format!("{user}@{host}:{remote}");
+        run_cmd(
+            "scp",
+            &[
+                "-P",
+                port_s.as_str(),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=15",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-r",
+                local,
+                target.as_str(),
+            ],
+            Duration::from_secs(120),
+        )
+    }
+}
+
 trait MapOk {
     fn map_ok_contains(self, needle: &str) -> Self;
 }

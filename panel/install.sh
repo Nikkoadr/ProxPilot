@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Proxmox Panel — one-line installer (Ubuntu / Debian / WSL).
 #
-#   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ProxPilot/master/panel/install.sh | bash
 #
 # Env overrides:
-#   PANEL_REPO=owner/repo   GitHub repo hosting releases (default Nikkoadr/ansible)
+#   PANEL_REPO=owner/repo   GitHub repo hosting releases (default Nikkoadr/ProxPilot)
 #   PANEL_VERSION=v2.1.0    release tag, or "latest"
 #   ADMIN_USER / ADMIN_PASS  seed login (default admin / admin123, change in Settings!)
 #   DATA_DIR                sqlite + state dir (default /var/lib/proxmox-panel)
 #   NO_SERVICE=1            skip systemd service, just install binary + deps
 set -euo pipefail
 
-REPO="${PANEL_REPO:-Nikkoadr/ansible}"
+REPO="${PANEL_REPO:-Nikkoadr/ProxPilot}"
 VERSION="${PANEL_VERSION:-latest}"
 DATA_DIR="${DATA_DIR:-/var/lib/proxmox-panel}"
 BIN="/usr/local/bin/proxmox-panel"
@@ -62,6 +62,10 @@ chmod 700 "$HOME/.ssh" 2>/dev/null || true
 chmod 600 "$HOME/.ssh/id_ed25519" 2>/dev/null || true
 
 echo "==> [4/6] panel binary ($REPO @ $VERSION)..."
+CLONE_URL="https://github.com/$REPO.git"
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  CLONE_URL="https://oauth2:${GITHUB_TOKEN}@github.com/$REPO.git"
+fi
 if [[ "$VERSION" == "latest" ]]; then
   # '|| true' agar set -o pipefail tidak mematikan script saat API 404 (belum ada Release).
   TAG="$(curl -fsSL "${AUTH[@]}" "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -m1 '"tag_name"' | cut -d'"' -f4 || true)"
@@ -77,16 +81,33 @@ else
   echo "      no release asset — building from source (this takes a few minutes)..."
   export PATH="$HOME/.cargo/bin:$PATH"
   command -v cargo >/dev/null || { echo "ERROR: cargo missing after toolchain install" >&2; exit 1; }
-  CLONE_URL="https://github.com/$REPO.git"
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    CLONE_URL="https://oauth2:${GITHUB_TOKEN}@github.com/$REPO.git"
-  fi
   rm -rf /tmp/panel-src
   git clone --depth 1 --branch master "$CLONE_URL" /tmp/panel-src
-  (cd /tmp/panel-src/proxmox-panel && cargo build --release)
-  $SUDO install -m 0755 /tmp/panel-src/proxmox-panel/target/release/proxmox-panel "$BIN"
-  rm -rf /tmp/panel-src
+  (cd /tmp/panel-src/panel && cargo build --release)
+  $SUDO install -m 0755 /tmp/panel-src/panel/target/release/proxmox-panel "$BIN"
   echo "      installed: $BIN (built from source)"
+fi
+
+echo "==> [4b/6] static files (/usr/share/proxmox-panel/static)..."
+STATIC_DST="/usr/share/proxmox-panel/static"
+if [[ -d /tmp/panel-src/panel/static ]]; then
+  $SUDO mkdir -p "$STATIC_DST"
+  $SUDO cp -r /tmp/panel-src/panel/static/. "$STATIC_DST/"
+  rm -rf /tmp/panel-src
+  echo "      static: from source checkout"
+else
+  rm -rf /tmp/panel-static
+  if git clone --depth 1 --branch master --filter=blob:none --sparse "$CLONE_URL" /tmp/panel-static 2>/dev/null \
+    && (cd /tmp/panel-static && git sparse-checkout set panel/static 2>/dev/null); then
+    $SUDO mkdir -p "$STATIC_DST"
+    $SUDO cp -r /tmp/panel-static/panel/static/. "$STATIC_DST/"
+    rm -rf /tmp/panel-static
+    echo "      static: from repo ($REPO)"
+  else
+    rm -rf /tmp/panel-static
+    echo "      WARNING: static files not installed — panel will serve fallback pages." >&2
+    echo "      Fix: git clone $REPO and copy panel/static to $STATIC_DST" >&2
+  fi
 fi
 
 echo "==> [5/6] data dir ($DATA_DIR)..."
@@ -94,7 +115,7 @@ $SUDO mkdir -p "$DATA_DIR/infra/terraform"
 if [[ "$(id -u)" -ne 0 ]]; then $SUDO chown -R "$(id -u):$(id -g)" "$DATA_DIR"; fi
 
 echo "==> [5b/6] update command (panel-update)..."
-RAW_BASE="https://raw.githubusercontent.com/$REPO/master/proxmox-panel"
+RAW_BASE="https://raw.githubusercontent.com/$REPO/master/panel"
 if curl -fsSL "${AUTH[@]}" -o /tmp/panel-update "$RAW_BASE/update.sh" 2>/dev/null; then
   $SUDO install -m 0755 /tmp/panel-update /usr/local/bin/panel-update
   rm -f /tmp/panel-update
@@ -118,8 +139,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$(id -un)
+WorkingDirectory=/usr/share/proxmox-panel
 Environment=PORT=8080
 Environment=PANEL_DATA=$DATA_DIR
+Environment=PANEL_STATIC=/usr/share/proxmox-panel/static
 Environment=ADMIN_USER=$ADMIN_USER
 Environment=ADMIN_PASS=$ADMIN_PASS
 ExecStart=$BIN

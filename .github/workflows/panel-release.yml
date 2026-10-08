@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: proxmox-panel
+        working-directory: panel
     steps:
       - uses: actions/checkout@v4
 
@@ -25,4 +25,4 @@ jobs:
       - name: Upload asset to release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/proxmox-panel#proxmox-panel-linux-x86_64
+          files: panel/target/release/proxmox-panel#proxmox-panel-linux-x86_64

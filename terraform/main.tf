@@ -38,10 +38,16 @@ variable "ssh_user" {
   default     = "ubuntu"
 }
 
-variable "ssh_private_key" {
-  description = "SSH private key path"
+variable "ssh_public_key" {
+  description = "SSH public key file injected into VMs via cloud-init"
   type        = string
-  default     = "~/.ssh/id_rsa"
+  default     = "~/.ssh/id_ed25519.pub"
+}
+
+variable "clone_template" {
+  description = "Cloud-init template name on Proxmox (must match panel default)"
+  type        = string
+  default     = "ubuntu-22-04-cloudinit"
 }
 
 # ============================================================
@@ -65,7 +71,7 @@ resource "proxmox_vm_qemu" "master" {
   scsihw     = "virtio-scsi-single"
 
   # Cloud-init disk
-  clone = "ubuntu-22-04-template"
+  clone = var.clone_template
 
   # Network
   network {
@@ -78,7 +84,7 @@ resource "proxmox_vm_qemu" "master" {
 
   # SSH key injection
   ssh_user     = var.ssh_user
-  sshkey       = file(var.ssh_private_key)
+  sshkey       = file(pathexpand(var.ssh_public_key))
 
   # Start after create
   start     = var.vm_start_on_create
@@ -107,7 +113,7 @@ resource "proxmox_vm_qemu" "worker1" {
   os_network_config = ""
   scsihw     = "virtio-scsi-single"
 
-  clone = "ubuntu-22-04-template"
+  clone = var.clone_template
 
   network {
     bridge = "vmbr0"
@@ -117,7 +123,7 @@ resource "proxmox_vm_qemu" "worker1" {
   ipconfig0 = "ip=192.168.1.11/24,gw=192.168.1.1"
 
   ssh_user     = var.ssh_user
-  sshkey       = file(var.ssh_private_key)
+  sshkey       = file(pathexpand(var.ssh_public_key))
 
   start     = var.vm_start_on_create
   onboot    = true
@@ -145,7 +151,7 @@ resource "proxmox_vm_qemu" "worker2" {
   os_network_config = ""
   scsihw     = "virtio-scsi-single"
 
-  clone = "ubuntu-22-04-template"
+  clone = var.clone_template
 
   network {
     bridge = "vmbr0"
@@ -155,7 +161,7 @@ resource "proxmox_vm_qemu" "worker2" {
   ipconfig0 = "ip=192.168.1.12/24,gw=192.168.1.1"
 
   ssh_user     = var.ssh_user
-  sshkey       = file(var.ssh_private_key)
+  sshkey       = file(pathexpand(var.ssh_public_key))
 
   start     = var.vm_start_on_create
   onboot    = true

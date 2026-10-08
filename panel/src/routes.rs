@@ -334,6 +334,7 @@ async fn run_deployment(state: AppState, id: &str) {
         None => return,
     };
     let id = id.to_string();
+    state.set_simulated(&id, false);
     state.set_status(&id, "deploying", 5);
     state.push_log(&id, "provision", "Validating cluster configuration (API Token auth)...", "info");
 
@@ -345,7 +346,8 @@ async fn run_deployment(state: AppState, id: &str) {
     }
     tokio::time::sleep(std::time::Duration::from_millis(600)).await;
 
-    // 1. Test Proxmox connection live
+    // 1. Test Proxmox connection live. Abort on failure — a green
+    // "success" without reachable Proxmox would be a lie.
     state.set_status(&id, "deploying", 12);
     state.push_log(&id, "provision", &format!("Testing Proxmox API {} ...", cluster.proxmox_url), "info");
     let creds = ProxmoxCreds {
@@ -356,8 +358,8 @@ async fn run_deployment(state: AppState, id: &str) {
         verify_tls: cluster.verify_tls,
     };
     let test = proxmox::test_connection(&creds).await;
-    let ok = test.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
-    if ok {
+    let proxmox_ok = test.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+    if proxmox_ok {
         state.push_log(
             &id,
             "provision",
@@ -373,14 +375,17 @@ async fn run_deployment(state: AppState, id: &str) {
             &id,
             "provision",
             &format!(
-                "Proxmox unreachable ({}). Continuing in simulated mode.",
+                "Proxmox unreachable ({}). Aborting: no VMs were created. Fix URL/token/TLS, then re-deploy.",
                 test.get("error").and_then(|x| x.as_str()).unwrap_or("unknown error")
             ),
-            "warning",
+            "error",
         );
+        state.set_simulated(&id, true);
+        state.set_status(&id, "error", 12);
+        return;
     }
 
-    // 2. Generate terraform files
+    // 2. Generate terraform files (real token secret, mode 0600).
     state.set_status(&id, "deploying", 22);
     state.push_log(&id, "provision", "Generating Terraform configuration...", "info");
     if let Err(e) = write_terraform(&state.infra_dir, &cluster) {
@@ -388,125 +393,188 @@ async fn run_deployment(state: AppState, id: &str) {
         state.set_status(&id, "error", 22);
         return;
     }
-    state.push_log(&id, "provision", "Terraform files written to infra/terraform/<id>/", "info");
+    state.push_log(
+        &id,
+        "provision",
+        &format!(
+            "Terraform files written to {}/terraform/{}/ (main.tf, terraform.tfvars [0600], inventory.ini, deploy-remote.sh)",
+            state.infra_dir, cluster.id
+        ),
+        "info",
+    );
 
-    // 3. Remote vs local execution path
+    // 3. Provision for real (terraform apply). No fake K8s phases:
+    // every log line below reflects a command that actually ran.
     let use_remote = !cluster.ssh_host.trim().is_empty();
-    if use_remote {
+    let provisioned = if use_remote {
         state.push_log(
             &id,
             "provision",
             &format!(
-                "Remote mode: ssh {}@{}:{} (Proxmox server)",
+                "Remote mode: provisioning on {}@{}:{} via ssh",
                 cluster.ssh_remote_user_or_default(),
                 cluster.ssh_host,
                 cluster.ssh_port
             ),
             "info",
         );
-        remote_path(&state, &id, &cluster).await;
+        remote_path(&state, &id, &cluster).await
     } else {
-        state.push_log(&id, "provision", "Local mode: executing on this host.", "info");
-        local_path(&state, &id, &cluster).await;
+        state.push_log(&id, "provision", "Local mode: provisioning on this host.", "info");
+        local_path(&state, &id, &cluster).await
+    };
+    if !provisioned {
+        // local_path/remote_path already logged the specific error.
+        state.set_simulated(&id, true);
+        state.set_status(&id, "error", 40);
+        state.push_log(&id, "provision", "Provisioning FAILED — no VMs were created. Fix the error above, then re-deploy.", "error");
+        return;
     }
 
-    // 4. Simulated phases (always run so UI shows full K8s flow; real outputs interleaved above)
-    let steps = [
-        ("Running terraform init...", 32),
-        ("Provisioning master VM(s)...", 44),
-        ("Provisioning worker VM(s)...", 54),
-        ("Waiting for VMs to boot (cloud-init)...", 62),
-        ("Setting up Kubernetes master (kubeadm)...", 72),
-        ("Joining worker nodes to cluster...", 80),
-        ("Installing Calico CNI network...", 86),
-        ("Deploying Nginx landing page...", 92),
-        ("Running health checks...", 96),
-    ];
-    for (msg, p) in steps {
-        // Skip sleeping if already error? keep going.
-        state.push_log(&id, "provision", msg, "info");
-        state.set_status(&id, "deploying", p);
-        tokio::time::sleep(std::time::Duration::from_millis(700)).await;
-    }
+    // 4. VMs exist now. Kubernetes install stays an explicit next step
+    // (ansible playbooks below) instead of faked sleep phases.
+    state.set_status(&id, "deploying", 90);
+    state.push_log(&id, "provision", "Terraform apply succeeded — VMs are provisioned.", "info");
+    let inv = format!("{}/terraform/{}/inventory.ini", state.infra_dir, cluster.id);
+    state.push_log(
+        &id,
+        "k8s",
+        &format!(
+            "Next: install Kubernetes with ansible (from the repo root):\n  ansible-playbook -i \"{inv}\" ansible/playbook-master.yml\n  ansible-playbook -i \"{inv}\" ansible/playbook-workers.yml\n  ansible-playbook -i \"{inv}\" ansible/playbook-nginx.yml"
+        ),
+        "info",
+    );
 
+    state.set_simulated(&id, false);
     state.set_status(&id, "running", 100);
-    state.push_log(&id, "provision", "Deployment complete! Cluster is ready.", "info");
+    state.push_log(&id, "provision", "Provisioning complete. Cluster is marked running.", "info");
 }
 
-async fn local_path(state: &AppState, id: &str, cluster: &Cluster) {
-    if !tokio::task::spawn_blocking(exec::wsl_available).await.unwrap_or(false) {
-        // Direct on-host path (panel runs on Linux): try native terraform.
-        // Ansible only exists on Linux — for the ansible stage use remote (SSH) mode.
+/// Provision on this host: `terraform init` + `terraform apply`.
+/// Returns true only if `terraform apply` exited 0 (VMs really exist).
+async fn local_path(state: &AppState, id: &str, cluster: &Cluster) -> bool {
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    let dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
+
+    if !via_wsl {
+        // Direct on-host path (panel runs on Linux).
         let tf = tokio::task::spawn_blocking(|| exec::tool_version_local("terraform"))
             .await
             .unwrap_or(exec::CmdResult { ok: false, output: "tool check failed".into(), ms: 0 });
         if !tf.ok {
-            state.push_log(id, "provision", "terraform not found on this host. Simulating. (Run install.sh to install it.)", "warning");
-            return;
+            state.push_log(id, "provision", "terraform not found on this host. Install it (or use remote mode), then re-deploy.", "error");
+            return false;
         }
         state.push_log(id, "provision", &format!("Terraform native: {}", tf.output.lines().next().unwrap_or("")), "info");
-        let dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
-        let out = tokio::task::spawn_blocking(move || {
+        state.set_status(id, "deploying", 32);
+        state.push_log(id, "provision", "Exec: terraform init -input=false (native)...", "info");
+        let dir2 = dir.clone();
+        let init = tokio::task::spawn_blocking(move || {
             std::process::Command::new("terraform")
-                .args(["init", "-backend=false", "-input=false"])
+                .args(["init", "-input=false"])
+                .current_dir(&dir2)
+                .output()
+        })
+        .await;
+        match init {
+            Ok(Ok(o)) if o.status.success() => {
+                let s = String::from_utf8_lossy(&o.stdout).to_string();
+                state.push_log(id, "provision", &format!("terraform init ok:\n{}", truncate(&s, 1200)), "info");
+            }
+            Ok(Ok(o)) => {
+                let err = String::from_utf8_lossy(&o.stderr).to_string();
+                state.push_log(id, "provision", &format!("terraform init FAILED:\n{}", truncate(&err, 1500)), "error");
+                return false;
+            }
+            _ => {
+                state.push_log(id, "provision", "terraform init (native) gagal dijalankan.", "error");
+                return false;
+            }
+        }
+        state.set_status(id, "deploying", 55);
+        state.push_log(id, "provision", "Exec: terraform apply -auto-approve -input=false (native)...", "info");
+        let apply = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("terraform")
+                .args(["apply", "-auto-approve", "-input=false"])
                 .current_dir(&dir)
                 .output()
         })
         .await;
-        match out {
+        match apply {
             Ok(Ok(o)) => {
-                let s = String::from_utf8_lossy(&o.stdout).to_string();
-                state.push_log(id, "provision", &format!("terraform init (native) ok={}:\n{}", o.status.success(), truncate(&s, 1200)), if o.status.success() { "info" } else { "warning" });
+                let out = format!(
+                    "{}\n[stderr]\n{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                let ok = o.status.success();
+                state.push_log(id, "provision", &format!("terraform apply ok={ok}:\n{}", truncate(&out, 2000)), if ok { "info" } else { "error" });
+                return ok;
             }
-            _ => state.push_log(id, "provision", "terraform init (native) gagal dijalankan.", "warning"),
+            _ => {
+                state.push_log(id, "provision", "terraform apply (native) gagal dijalankan.", "error");
+                return false;
+            }
         }
-        return;
     }
-    // Best-effort real tool detection inside WSL.
+    // WSL-bridged path (binary runs on Windows, tools live in WSL).
     let tools = tokio::task::spawn_blocking(exec::tools_summary).await.unwrap_or(json!({}));
     let tf_ok = tools.pointer("/terraform/wsl/ok").and_then(|x| x.as_bool()).unwrap_or(false);
-    let an_ok = tools.pointer("/ansible/wsl/ok").and_then(|x| x.as_bool()).unwrap_or(false);
     state.push_log(
         id,
         "provision",
         &format!(
-            "Tools: terraform={} ansible={} | terraform {} | ansible {}",
+            "Tools (wsl): terraform={} | {}",
             tf_ok,
-            an_ok,
             tools.pointer("/terraform/wsl/output").and_then(|x| x.as_str()).unwrap_or("-"),
-            tools.pointer("/ansible/wsl/output").and_then(|x| x.as_str()).unwrap_or("-"),
         ),
-        if tf_ok && an_ok { "info" } else { "warning" },
+        if tf_ok { "info" } else { "error" },
     );
     if !tf_ok {
-        state.push_log(id, "provision", "terraform not found (run install.sh to install it). Simulating.", "warning");
-        return;
+        state.push_log(id, "provision", "terraform not found in WSL (run install.sh to install it), then re-deploy.", "error");
+        return false;
     }
-    // Attempt `terraform init -backend=false` as a safe non-destructive proof.
-    let dir_win = format!("{}/terraform/{}", state.infra_dir, cluster.id);
-    let dir_wsl = win_to_wsl(&dir_win);
-    let cmd = format!("cd \"{}\" && terraform init -backend=false -input=false 2>&1 | head -30", dir_wsl.replace('"', "\\\""));
-    state.push_log(id, "provision", &format!("Exec: {cmd}"), "info");
+    state.set_status(id, "deploying", 32);
+    let dir_wsl = win_to_wsl(&dir);
+    let cmd = format!(
+        "cd \"{}\" && terraform init -input=false 2>&1 && terraform apply -auto-approve -input=false 2>&1 | tail -40",
+        dir_wsl.replace('"', "\\\"")
+    );
+    state.push_log(id, "provision", "Exec (wsl): terraform init + apply...", "info");
     let out = tokio::task::spawn_blocking(move || exec::run_in_wsl(&cmd)).await;
     match out {
-        Ok(r) => state.push_log(
-            id,
-            "provision",
-            &format!("terraform init ok={}:\n{}", r.ok, truncate(&r.output, 1200)),
-            if r.ok { "info" } else { "warning" },
-        ),
-        Err(e) => state.push_log(id, "provision", &format!("Exec failed: {e}"), "error"),
+        Ok(r) => {
+            state.push_log(
+                id,
+                "provision",
+                &format!("terraform init+apply ok={}:\n{}", r.ok, truncate(&r.output, 2000)),
+                if r.ok { "info" } else { "error" },
+            );
+            r.ok
+        }
+        Err(e) => {
+            state.push_log(id, "provision", &format!("Exec failed: {e}"), "error");
+            false
+        }
     }
-    let _ = an_ok;
 }
 
-async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
+/// Provision on the Proxmox server over ssh: scp the generated dir,
+/// then `terraform init + apply` there. Returns true only if the
+/// remote apply exited 0.
+async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) -> bool {
     let host = cluster.ssh_host.clone();
     let user = cluster.ssh_remote_user_or_default();
     let port = cluster.ssh_port;
-    // 1. SSH connectivity test
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    // 1. SSH connectivity test (native on Linux, WSL-bridged on Windows).
     state.push_log(id, "provision", &format!("SSH: ssh -p {port} {user}@{host} ..."), "info");
-    let r = tokio::task::spawn_blocking(move || exec::ssh_test_via_wsl(&host, &user, port)).await;
+    let (h, u) = (host.clone(), user.clone());
+    let r = tokio::task::spawn_blocking(move || exec::ssh_test_auto(&h, &u, port, via_wsl)).await;
     match r {
         Ok(res) if res.ok => {
             state.push_log(id, "provision", &format!("SSH OK ({} ms):\n{}", res.ms, truncate(&res.output, 800)), "info");
@@ -518,19 +586,17 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
                 &format!("SSH FAILED ({} ms). Check ~/.ssh keys on this host + authorized_keys on Proxmox. Output:\n{}", res.ms, truncate(&res.output, 800)),
                 "error",
             );
-            state.push_log(id, "provision", "Continuing in simulated mode. Fix SSH then re-deploy.", "warning");
-            return;
+            return false;
         }
         Err(e) => {
             state.push_log(id, "provision", &format!("SSH task failed: {e}"), "error");
-            return;
+            return false;
         }
     }
     // 2. Remote tool versions
-    let host2 = cluster.ssh_host.clone();
-    let user2 = cluster.ssh_remote_user_or_default();
+    let (host2, user2) = (host.clone(), user.clone());
     let r2 = tokio::task::spawn_blocking(move || {
-        exec::ssh_exec_via_wsl(&host2, &user2, port, "terraform version 2>&1 | head -2; echo ---; ansible --version 2>&1 | head -2")
+        exec::ssh_exec_auto(&host2, &user2, port, "terraform version 2>&1 | head -2; echo ---; ansible --version 2>&1 | head -2", via_wsl)
     })
     .await;
     match r2 {
@@ -542,12 +608,70 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
         ),
         Err(e) => state.push_log(id, "provision", &format!("Remote tool check failed: {e}"), "warning"),
     }
-    state.push_log(
-        id,
-        "provision",
-        "Remote apply: sync infra/terraform/<id>/ to server (scp) then `terraform apply` there. Auto-sync not yet enabled — run manually, see README.",
-        "warning",
-    );
+    // 3. Sync generated files to the server.
+    let local_dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
+    let scp_src = if via_wsl { win_to_wsl(&local_dir) } else { local_dir.clone() };
+    let remote_dir = format!("/tmp/proxmox-panel/{}", cluster.id);
+    state.set_status(id, "deploying", 45);
+    state.push_log(id, "provision", &format!("Sync: scp -r -> {user}@{host}:{remote_dir} ..."), "info");
+    let (h3, u3, d3) = (host.clone(), user.clone(), remote_dir.clone());
+    let mkdir = tokio::task::spawn_blocking(move || {
+        exec::ssh_exec_auto(&h3, &u3, port, &format!("mkdir -p '{remote_dir_s}'", remote_dir_s = d3.replace('\'', "'\\''")), via_wsl)
+    })
+    .await;
+    if !matches!(mkdir, Ok(ref r) if r.ok) {
+        state.push_log(id, "provision", "Remote mkdir failed — aborting.", "error");
+        return false;
+    }
+    let (h4, u4) = (host.clone(), user.clone());
+    let scp_dst = format!("{remote_dir}/");
+    let cp = tokio::task::spawn_blocking(move || {
+        exec::scp_to_remote(&h4, &u4, port, &scp_src, &scp_dst, via_wsl)
+    })
+    .await;
+    match cp {
+        Ok(res) if res.ok => {
+            state.push_log(id, "provision", "Sync OK.", "info");
+        }
+        Ok(res) => {
+            state.push_log(id, "provision", &format!("Sync (scp) FAILED:\n{}", truncate(&res.output, 1200)), "error");
+            state.push_log(id, "provision", "Fallback manual: run the generated deploy-remote.sh from a shell that has the files.", "warning");
+            return false;
+        }
+        Err(e) => {
+            state.push_log(id, "provision", &format!("Sync task failed: {e}"), "error");
+            return false;
+        }
+    }
+    // 4. Remote init + apply.
+    state.set_status(id, "deploying", 60);
+    state.push_log(id, "provision", "Exec (remote): terraform init + apply -auto-approve ...", "info");
+    let (h5, u5, d5) = (host.clone(), user.clone(), remote_dir.clone());
+    let ap = tokio::task::spawn_blocking(move || {
+        exec::ssh_exec_auto(
+            &h5,
+            &u5,
+            port,
+            &format!("cd '{d5}' && terraform init -input=false 2>&1 && terraform apply -auto-approve -input=false 2>&1 | tail -40"),
+            via_wsl,
+        )
+    })
+    .await;
+    match ap {
+        Ok(res) => {
+            state.push_log(
+                id,
+                "provision",
+                &format!("Remote terraform ok={} ({} ms):\n{}", res.ok, res.ms, truncate(&res.output, 2500)),
+                if res.ok { "info" } else { "error" },
+            );
+            res.ok
+        }
+        Err(e) => {
+            state.push_log(id, "provision", &format!("Remote apply task failed: {e}"), "error");
+            false
+        }
+    }
 }
 
 // ---------- terraform filegen ----------
@@ -555,18 +679,26 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
 fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
     let dir = format!("{infra_dir}/terraform/{}", c.id);
     std::fs::create_dir_all(&dir)?;
+    // Restrict the dir: terraform.tfvars below holds the real API token.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    // NOTE: the real token secret is required here — `terraform apply`
+    // cannot authenticate with a redacted placeholder.
     let vars = format!(
         "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\n",
-        c.proxmox_url,
-        c.proxmox_user,
-        c.token_id,
-        "***redacted***",
-        c.target_node,
-        c.clone_template,
-        c.network_bridge,
-        c.gateway,
-        c.dns1,
-        c.ssh_user,
+        hcl_escape(&c.proxmox_url),
+        hcl_escape(&c.proxmox_user),
+        hcl_escape(&c.token_id),
+        hcl_escape(&c.token_secret),
+        hcl_escape(&c.target_node),
+        hcl_escape(&c.clone_template),
+        hcl_escape(&c.network_bridge),
+        hcl_escape(&c.gateway),
+        hcl_escape(&c.dns1),
+        hcl_escape(&c.ssh_user),
         c.master_count,
         c.worker_count,
         c.master_cpu,
@@ -574,19 +706,58 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         c.worker_cpu,
         c.worker_ram,
     );
-    std::fs::write(format!("{dir}/terraform.tfvars"), vars)?;
+    let tfvars = format!("{dir}/terraform.tfvars");
+    std::fs::write(&tfvars, vars)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tfvars, std::fs::Permissions::from_mode(0o600));
+    }
     std::fs::write(format!("{dir}/main.tf"), terraform_main_tf())?;
-    // Write a non-secret inventory for ansible stage.
-    let inv = format!(
-        "[k8s_master]\nmaster ansible_host=192.168.1.10 ansible_user={}\n\n[k8s_workers]\nworker1 ansible_host=192.168.1.11 ansible_user={}\nworker2 ansible_host=192.168.1.12 ansible_user={}\n",
-        c.ssh_user, c.ssh_user, c.ssh_user
+    // Ansible inventory sized to the requested counts. IPs are DHCP-assigned
+    // by Terraform — fill ansible_host from `terraform output` after apply.
+    let mut inv = format!(
+        "# Generated by proxmox-panel for cluster '{}' ({})\n# Fill ansible_host per node from `terraform output` (DHCP leases), e.g.\n#   master-0 ansible_host=192.168.1.50 ansible_user={}\n\n[k8s_master]\n",
+        c.name, c.id, c.ssh_user
     );
+    for i in 0..c.master_count.max(1) {
+        inv.push_str(&format!("master-{i} ansible_host=master-{i} ansible_user={}\n", c.ssh_user));
+    }
+    inv.push_str("\n[k8s_workers]\n");
+    for i in 0..c.worker_count.max(0) {
+        inv.push_str(&format!("worker-{i} ansible_host=worker-{i} ansible_user={}\n", c.ssh_user));
+    }
+    inv.push_str("\n[nginx_group]\nmaster-0\n\n[k8s_cluster:children]\nk8s_master\nk8s_workers\n");
     std::fs::write(format!("{dir}/inventory.ini"), inv)?;
+    // Manual fallback for remote apply (used automatically by remote mode,
+    // runnable by hand when scp/ssh from the panel is unavailable).
+    let remote_user = if c.ssh_remote_user.trim().is_empty() {
+        "root".to_string()
+    } else {
+        c.ssh_remote_user.clone()
+    };
+    let script = format!(
+        "#!/usr/bin/env bash\n# Manual remote apply for cluster '{}' ({})\n# Usage: ./deploy-remote.sh   (needs scp/ssh access to the Proxmox server)\nset -euo pipefail\nSRC=\"$(dirname \"$0\")\"\nREMOTE_DIR=\"/tmp/proxmox-panel/{}\"\nssh -p {} {}@{} \"mkdir -p '$REMOTE_DIR'\"\nscp -P {} -r \"$SRC/.\" \"{}@{}:$REMOTE_DIR/\"\nssh -p {} {}@{} \"cd '$REMOTE_DIR' && terraform init -input=false && terraform apply -auto-approve -input=false\"\n",
+        c.name, c.id, c.id, c.ssh_port, remote_user, c.ssh_host,
+        c.ssh_port, remote_user, c.ssh_host, c.ssh_port, remote_user, c.ssh_host,
+    );
+    let script_path = format!("{dir}/deploy-remote.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+    }
     Ok(())
 }
 
+fn hcl_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn terraform_main_tf() -> &'static str {
-    r#"# Generated by proxmox-panel (Rust). Fill pm_api_token_id/secret via env or tfvars on the target host.
+    r#"# Generated by proxmox-panel (Rust). Credentials come from the
+# generated terraform.tfvars (mode 0600) next to this file.
 variable "proxmox_api_url" { type = string }
 variable "proxmox_user" { type = string }
 variable "proxmox_token" { type = string sensitive = true }
@@ -650,6 +821,16 @@ resource "proxmox_vm_qemu" "worker" {
   onboot = true
   lifecycle { ignore_changes = [network] }
 }
+
+output "master_ips" {
+  description = "DHCP IPs of master VMs (fill into inventory.ini)"
+  value = proxmox_vm_qemu.master[*].default_ipv4_address
+}
+
+output "worker_ips" {
+  description = "DHCP IPs of worker VMs (fill into inventory.ini)"
+  value = proxmox_vm_qemu.worker[*].default_ipv4_address
+}
 "#
 }
 
@@ -694,6 +875,55 @@ fn _unused(_m: &HashMap<String, String>) {
         size: String::new(),
         description: String::new(),
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wsl_path_conversion() {
+        assert_eq!(win_to_wsl("D:\\a\\b"), "/mnt/d/a/b");
+        assert_eq!(win_to_wsl("/tmp/x"), "/tmp/x");
+    }
+
+    #[test]
+    fn hcl_escapes_quotes_and_backslashes() {
+        assert_eq!(hcl_escape("a\"b\\c"), "a\\\"b\\\\c");
+    }
+
+    #[test]
+    fn filegen_writes_real_secret_and_sized_inventory() {
+        let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
+        let infra = base.to_string_lossy().to_string();
+        let payload: Cluster = serde_json::from_value(serde_json::json!({
+            "name": "t",
+            "token_secret": "s3cr\"et",
+            "master_count": 2,
+            "worker_count": 3,
+        }))
+        .unwrap();
+        let c = Cluster::new(payload);
+        write_terraform(&infra, &c).unwrap();
+
+        let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        assert!(tfvars.contains("proxmox_token = \"s3cr\\\"et\""), "{tfvars}");
+        assert!(!tfvars.contains("redacted"));
+
+        let inv = std::fs::read_to_string(format!("{infra}/terraform/{}/inventory.ini", c.id)).unwrap();
+        let entries = inv
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#') && l.contains("ansible_host="))
+            .count();
+        assert_eq!(entries, 5, "{inv}");
+        assert!(inv.contains("master-1"));
+        assert!(inv.contains("worker-2"));
+
+        let script = std::fs::read_to_string(format!("{infra}/terraform/{}/deploy-remote.sh", c.id)).unwrap();
+        assert!(script.contains("terraform apply -auto-approve"));
+
+        std::fs::remove_dir_all(&base).ok();
+    }
 }
 
 // Shim for unwrap_or on JoinHandle error path (never actually constructed).

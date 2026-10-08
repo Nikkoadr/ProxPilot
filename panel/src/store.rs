@@ -15,10 +15,11 @@ pub struct AppState {
     pub db: Db,
     pub log_tx: broadcast::Sender<LogBroadcast>,
     pub infra_dir: String,
+    pub static_dir: String,
 }
 
 impl AppState {
-    pub fn new(db: Db, infra_dir: String) -> Self {
+    pub fn new(db: Db, infra_dir: String, static_dir: String) -> Self {
         // Deployments interrupted by restart can never finish — mark error.
         for id in db.mark_interrupted() {
             let e = LogEntry::new(&id, "provision", "Panel restarted: deployment interrupted.", "error");
@@ -29,6 +30,7 @@ impl AppState {
             db,
             log_tx: tx,
             infra_dir,
+            static_dir,
         }
     }
 
@@ -69,12 +71,21 @@ impl AppState {
         self.db.get_cluster(id).is_some()
     }
 
+    pub fn set_simulated(&self, cluster_id: &str, simulated: bool) {
+        if let Some(mut c) = self.db.get_cluster(cluster_id) {
+            c.simulated = simulated;
+            c.updated_at = chrono::Utc::now();
+            self.db.save_cluster(&c);
+        }
+    }
+
     pub fn status_view(&self, id: &str) -> Option<serde_json::Value> {
         let c = self.db.get_cluster(id)?;
         let logs = self.db.get_logs(id);
         Some(serde_json::json!({
             "status": c.status,
             "progress": c.progress,
+            "simulated": c.simulated,
             "logs": logs,
             "cluster": c.masked(),
         }))
