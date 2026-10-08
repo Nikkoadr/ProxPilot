@@ -24,7 +24,7 @@
 </nav>
 <div class="container-fluid">
 <h1 class="h3 mb-4 text-gray-800">Health &amp; Connections <span class="small text-muted">(auto-refresh 10s)</span></h1>
-<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">WSL + Tools (lokal &amp; dalam WSL)</h6></div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Host + Tools</h6></div>
 <div class="card-body">
 <div>WSL: <span id="wslState">...</span></div>
 <pre class="out" id="wslDistros">...</pre>
@@ -46,14 +46,14 @@
 <button id="btnProx" class="btn btn-info btn-sm">Test Proxmox</button>
 <pre class="out mt-2" id="proxOut">not tested</pre>
 </div></div></div>
-<div class="col-lg-6"><div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">SSH via WSL ke Proxmox</h6></div>
+<div class="col-lg-6"><div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">SSH ke Proxmox</h6></div>
 <div class="card-body">
 <div class="form-group"><label>SSH host</label><input id="sHost" class="form-control" placeholder="192.168.1.100"></div>
 <div class="form-row"><div class="form-group col-8"><label>SSH user</label><input id="sUser" class="form-control" value="root"></div>
 <div class="form-group col-4"><label>Port</label><input id="sPort" type="number" class="form-control" value="22"></div></div>
-<button id="btnSsh" class="btn btn-info btn-sm">Test SSH via WSL</button>
+<button id="btnSsh" class="btn btn-info btn-sm">Test SSH</button>
 <pre class="out mt-2" id="sshOut">not tested</pre>
-<div class="small text-muted mt-2">Di WSL: <code>ssh-keygen && ssh-copy-id root@&lt;proxmox&gt;</code>. Backend menjalankan <code>wsl ssh -o BatchMode=yes ...</code> jadi tanpa password.</div>
+<div class="small text-muted mt-2">Di host ini: <code>ssh-keygen && ssh-copy-id root@&lt;proxmox&gt;</code>. Backend menjalankan <code>ssh -o BatchMode=yes ...</code> jadi tanpa password.</div>
 </div></div></div>
 </div>
 </div>

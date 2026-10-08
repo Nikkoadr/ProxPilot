@@ -24,7 +24,7 @@ async function testProxmox(){
   catch(e){out.textContent=String(e);}
 }
 async function testSsh(){
-  const out=document.getElementById('sshOut');out.textContent='testing via WSL ssh...';
+  const out=document.getElementById('sshOut');out.textContent='testing ssh...';
   const body={ssh_host:document.getElementById('sHost').value.trim(),
     ssh_user:document.getElementById('sUser').value.trim()||'root',
     ssh_port:parseInt(document.getElementById('sPort').value,10)||22};

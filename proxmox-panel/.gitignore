@@ -1,12 +1,15 @@
 # Build output
 target/
-frontend/dist/
-backend/proxmox-panel.exe
-backend/*.exe
+dist/
 
 # Environment
 .env
 .env.local
+
+# Runtime data (SQLite + generated infra)
+data/
+infra/terraform/*/
+!infra/terraform/.gitkeep
 
 # IDE
 .vscode/
@@ -27,8 +30,6 @@ logs/
 *.tfstate
 *.tfstate.backup
 .terraform/
-infra/terraform/*/
-!infra/terraform/.gitkeep
 
 # Temp
 *.tmp

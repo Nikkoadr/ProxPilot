@@ -1,7 +1,8 @@
-//! WSL + SSH executor.
+//! Local + SSH executor (panel runs on Linux: WSL, Ubuntu, Debian).
 //!
-//! Lokal (Windows): semua perintah dijalankan lewat `wsl bash -lc "..."`.
-//! Remote: `wsl ssh -o ConnectTimeout=5 -p PORT user@host "<cmd>"`.
+//! Lokal: perintah dijalankan langsung di host (`terraform`, `ansible`, `ssh`).
+//! Remote: `ssh -o ConnectTimeout=5 -p PORT user@host "<cmd>"` ke server Proxmox.
+//! Lapisan `wsl ...` dipertahankan sebagai compat bila binary dijalankan dari Windows.
 
 use std::process::Command;
 use std::time::{Duration, Instant};

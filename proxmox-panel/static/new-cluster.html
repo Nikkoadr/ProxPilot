@@ -39,16 +39,16 @@
 <button type="button" id="btnProxmox" class="btn btn-info btn-sm"><i class="fas fa-plug"></i> Test Proxmox connection</button>
 <pre class="out mt-2" id="proxOut">not tested</pre>
 </div></div>
-<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Execution: WSL lokal / SSH remote ke Proxmox</h6></div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Execution: lokal / SSH remote ke Proxmox</h6></div>
 <div class="card-body">
-<div class="custom-control custom-checkbox mb-2"><input type="checkbox" class="custom-control-input" id="useRemote"><label class="custom-control-label" for="useRemote">Remote mode — jalankan via <code>wsl ssh</code> ke server Proxmox (kalau off: via WSL lokal)</label></div>
+<div class="custom-control custom-checkbox mb-2"><input type="checkbox" class="custom-control-input" id="useRemote"><label class="custom-control-label" for="useRemote">Remote mode — jalankan via <code>ssh</code> ke server Proxmox (kalau off: eksekusi lokal di host ini)</label></div>
 <div class="form-row">
 <div class="form-group col-md-6"><label>SSH host (Proxmox server)</label><input id="ssh_host" class="form-control" placeholder="192.168.1.100"></div>
 <div class="form-group col-md-4"><label>SSH user (remote)</label><input id="ssh_user_remote" class="form-control" value="root"></div>
 <div class="form-group col-md-2"><label>Port</label><input id="ssh_port" type="number" class="form-control" value="22"></div>
 </div>
-<button type="button" id="btnSsh" class="btn btn-info btn-sm"><i class="fas fa-terminal"></i> Test SSH via WSL</button>
-<pre class="out mt-2" id="sshOut">not tested — butuh key ~/.ssh di WSL + authorized_keys di Proxmox</pre>
+<button type="button" id="btnSsh" class="btn btn-info btn-sm"><i class="fas fa-terminal"></i> Test SSH</button>
+<pre class="out mt-2" id="sshOut">not tested — butuh key ~/.ssh di host ini + authorized_keys di Proxmox</pre>
 </div></div>
 <div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Network &amp; Nodes</h6></div>
 <div class="card-body"><div class="form-row">
@@ -70,7 +70,7 @@
 <br>
 </div>
 </div>
-<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>Token: Proxmox → Datacenter → Access → API Tokens. SSH: key di WSL (<code>ssh-keygen</code> + <code>ssh-copy-id</code>).</span></div></div></footer>
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>Token: Proxmox → Datacenter → Access → API Tokens. SSH: <code>ssh-keygen</code> + <code>ssh-copy-id</code> di host ini.</span></div></div></footer>
 </div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>

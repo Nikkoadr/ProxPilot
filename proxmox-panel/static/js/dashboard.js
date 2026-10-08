@@ -33,9 +33,9 @@ function renderTools(t){
     <div><span class="rounded-circle d-inline-block ${ok?'bg-success':'bg-danger'}" style="width:10px;height:10px"></span> <strong>${title}</strong></div>
     <div class="small text-muted">${esc(sub||'')}</div></div></div>`;
   el.innerHTML=
-    card('WSL',!!wsl,(t.wsl?.distros||'').split('\n').slice(0,2).join(' · ').slice(0,80))+
-    card('Terraform (WSL)',!!t.terraform?.wsl?.ok,t.terraform?.wsl?.output)+
-    card('Ansible (WSL)',!!t.ansible?.wsl?.ok,t.ansible?.wsl?.output)+
-    card('SSH (WSL)',!!t.ssh?.wsl?.ok,t.ssh?.wsl?.output);
+    card('Terraform',!!t.terraform?.local?.ok,t.terraform?.local?.output)+
+    card('Ansible',!!t.ansible?.local?.ok,t.ansible?.local?.output)+
+    card('SSH',!!t.ssh?.local?.ok,t.ssh?.local?.output)+
+    card('WSL compat',!!wsl,(t.wsl?.distros||'').split('\n').slice(0,2).join(' · ').slice(0,80));
 }
 document.addEventListener('DOMContentLoaded',()=>{loadDashboard();setInterval(loadDashboard,5000);});

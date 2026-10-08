@@ -1,26 +1,21 @@
 #!/usr/bin/env bash
-# Proxmox Panel — one-line installer (Ubuntu / Debian / WSL / any systemd Linux).
+# Proxmox Panel — one-line installer (Ubuntu / Debian / WSL).
 #
-#   curl -fsSL https://raw.githubusercontent.com/<USER>/proxmox-panel/main/proxmox-panel/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/main/proxmox-panel/install.sh | bash
 #
 # Env overrides:
-#   PANEL_REPO=owner/repo   GitHub repo hosting releases (REQUIRED — edit default below)
+#   PANEL_REPO=owner/repo   GitHub repo hosting releases (default Nikkoadr/ansible)
 #   PANEL_VERSION=v2.1.0    release tag, or "latest"
 #   ADMIN_USER / ADMIN_PASS  seed login (default admin / admin123, change in Settings!)
 #   DATA_DIR                sqlite + state dir (default /var/lib/proxmox-panel)
 #   NO_SERVICE=1            skip systemd service, just install binary + deps
 set -euo pipefail
 
-REPO="${PANEL_REPO:-<USER>/proxmox-panel}"
+REPO="${PANEL_REPO:-Nikkoadr/ansible}"
 VERSION="${PANEL_VERSION:-latest}"
 DATA_DIR="${DATA_DIR:-/var/lib/proxmox-panel}"
 BIN="/usr/local/bin/proxmox-panel"
 SERVICE="proxmox-panel"
-
-if [[ "$REPO" == "<USER>/proxmox-panel" ]]; then
-  echo "ERROR: edit PANEL_REPO or export PANEL_REPO=owner/repo (your GitHub releases repo)." >&2
-  exit 1
-fi
 
 SUDO=""
 if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi

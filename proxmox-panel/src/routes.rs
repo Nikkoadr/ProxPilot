@@ -186,8 +186,8 @@ async fn ssh_test(Json(req): Json<SshTestRequest>) -> Json<Value> {
     if req.ssh_host.trim().is_empty() {
         return Json(json!({"ok": false, "error": "ssh_host is required"}));
     }
-    // WSL preferred (Linux ssh + keys di ~/.ssh WSL), fallback ke ssh native
-    // (mis. OpenSSH bawaan Windows) supaya tetap bisa tanpa WSL.
+    // Direct ssh (panel runs on Linux; keys in ~/.ssh), BatchMode so it
+    // fails fast instead of hanging on password prompt.
     let via_wsl = exec::wsl_available();
     let host = req.ssh_host.clone();
     let user = if req.ssh_user.is_empty() {
@@ -390,14 +390,14 @@ async fn run_deployment(state: AppState, id: &str) {
     }
     state.push_log(&id, "provision", "Terraform files written to infra/terraform/<id>/", "info");
 
-    // 3. Remote vs WSL-local execution path
+    // 3. Remote vs local execution path
     let use_remote = !cluster.ssh_host.trim().is_empty();
     if use_remote {
         state.push_log(
             &id,
             "provision",
             &format!(
-                "Remote mode: WSL -> ssh {}@{}:{} (Proxmox server)",
+                "Remote mode: ssh {}@{}:{} (Proxmox server)",
                 cluster.ssh_remote_user_or_default(),
                 cluster.ssh_host,
                 cluster.ssh_port
@@ -406,7 +406,7 @@ async fn run_deployment(state: AppState, id: &str) {
         );
         remote_path(&state, &id, &cluster).await;
     } else {
-        state.push_log(&id, "provision", "Local mode: executing via WSL (wsl bash -lc ...).", "info");
+        state.push_log(&id, "provision", "Local mode: executing on this host.", "info");
         local_path(&state, &id, &cluster).await;
     }
 
@@ -435,13 +435,13 @@ async fn run_deployment(state: AppState, id: &str) {
 
 async fn local_path(state: &AppState, id: &str, cluster: &Cluster) {
     if !tokio::task::spawn_blocking(exec::wsl_available).await.unwrap_or(false) {
-        // Tanpa WSL: coba terraform native (Windows). Ansible tidak ada native
-        // di Windows — untuk tahap ansible gunakan mode remote (SSH ke server).
+        // Direct on-host path (panel runs on Linux): try native terraform.
+        // Ansible only exists on Linux — for the ansible stage use remote (SSH) mode.
         let tf = tokio::task::spawn_blocking(|| exec::tool_version_local("terraform"))
             .await
             .unwrap_or(exec::CmdResult { ok: false, output: "tool check failed".into(), ms: 0 });
         if !tf.ok {
-            state.push_log(id, "provision", "WSL tidak ada + terraform native tidak ketemu. Simulating. (Ansible memang butuh Linux — pakai mode remote/SSH.)", "warning");
+            state.push_log(id, "provision", "terraform not found on this host. Simulating. (Run install.sh to install it.)", "warning");
             return;
         }
         state.push_log(id, "provision", &format!("Terraform native: {}", tf.output.lines().next().unwrap_or("")), "info");
@@ -470,7 +470,7 @@ async fn local_path(state: &AppState, id: &str, cluster: &Cluster) {
         id,
         "provision",
         &format!(
-            "WSL tools: terraform(wsl)={} ansible(wsl)={} | terraform {} | ansible {}",
+            "Tools: terraform={} ansible={} | terraform {} | ansible {}",
             tf_ok,
             an_ok,
             tools.pointer("/terraform/wsl/output").and_then(|x| x.as_str()).unwrap_or("-"),
@@ -479,23 +479,23 @@ async fn local_path(state: &AppState, id: &str, cluster: &Cluster) {
         if tf_ok && an_ok { "info" } else { "warning" },
     );
     if !tf_ok {
-        state.push_log(id, "provision", "terraform not found in WSL (install it there to enable real runs). Simulating.", "warning");
+        state.push_log(id, "provision", "terraform not found (run install.sh to install it). Simulating.", "warning");
         return;
     }
     // Attempt `terraform init -backend=false` as a safe non-destructive proof.
     let dir_win = format!("{}/terraform/{}", state.infra_dir, cluster.id);
     let dir_wsl = win_to_wsl(&dir_win);
     let cmd = format!("cd \"{}\" && terraform init -backend=false -input=false 2>&1 | head -30", dir_wsl.replace('"', "\\\""));
-    state.push_log(id, "provision", &format!("WSL exec: {cmd}"), "info");
+    state.push_log(id, "provision", &format!("Exec: {cmd}"), "info");
     let out = tokio::task::spawn_blocking(move || exec::run_in_wsl(&cmd)).await;
     match out {
         Ok(r) => state.push_log(
             id,
             "provision",
-            &format!("terraform init (wsl) ok={}:\n{}", r.ok, truncate(&r.output, 1200)),
+            &format!("terraform init ok={}:\n{}", r.ok, truncate(&r.output, 1200)),
             if r.ok { "info" } else { "warning" },
         ),
-        Err(e) => state.push_log(id, "provision", &format!("WSL exec failed: {e}"), "error"),
+        Err(e) => state.push_log(id, "provision", &format!("Exec failed: {e}"), "error"),
     }
     let _ = an_ok;
 }
@@ -504,8 +504,8 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
     let host = cluster.ssh_host.clone();
     let user = cluster.ssh_remote_user_or_default();
     let port = cluster.ssh_port;
-    // 1. SSH connectivity test via WSL
-    state.push_log(id, "provision", &format!("SSH via WSL: ssh -p {port} {user}@{host} ..."), "info");
+    // 1. SSH connectivity test
+    state.push_log(id, "provision", &format!("SSH: ssh -p {port} {user}@{host} ..."), "info");
     let r = tokio::task::spawn_blocking(move || exec::ssh_test_via_wsl(&host, &user, port)).await;
     match r {
         Ok(res) if res.ok => {
@@ -515,7 +515,7 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) {
             state.push_log(
                 id,
                 "provision",
-                &format!("SSH FAILED ({} ms). Check ~/.ssh keys in WSL + authorized_keys on Proxmox. Output:\n{}", res.ms, truncate(&res.output, 800)),
+                &format!("SSH FAILED ({} ms). Check ~/.ssh keys on this host + authorized_keys on Proxmox. Output:\n{}", res.ms, truncate(&res.output, 800)),
                 "error",
             );
             state.push_log(id, "provision", "Continuing in simulated mode. Fix SSH then re-deploy.", "warning");

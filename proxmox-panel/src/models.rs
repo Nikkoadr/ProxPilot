@@ -50,7 +50,7 @@ pub struct Cluster {
     pub ssh_user: String,
     #[serde(default)]
     pub ssh_public_key: String,
-    /// Remote exec via WSL -> ssh. Empty = run locally in WSL.
+/// Remote exec via ssh. Empty ssh_host = run locally on this host.
     #[serde(default)]
     pub ssh_host: String,
     #[serde(default = "default_ssh_port")]

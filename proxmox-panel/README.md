@@ -4,50 +4,54 @@ Panel untuk provisioning Kubernetes cluster di Proxmox VE. Backend **Rust (Axum)
 frontend **SB Admin 2** (static, no build), realtime via **WebSocket + polling**,
 storage **SQLite**, login **admin + password (dapat diubah)**.
 
-**Auth Proxmox: API Token.** **Eksekusi: WSL lokal, atau WSL → `ssh` ke server Proxmox.**
+**Auth Proxmox: API Token.** **Eksekusi lokal di host, atau `ssh` ke server Proxmox.**
 
 ---
 
-## Install 1 perintah (customer)
-
-**Linux / WSL (Ubuntu/Debian)** — install ansible + terraform + ssh key + binary + systemd service:
+## Install 1 perintah (WSL / Ubuntu / Debian)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<USER>/proxmox-panel/main/proxmox-panel/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/main/proxmox-panel/install.sh | bash
 ```
 
-Env opsional: `PANEL_REPO=owner/repo PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
+Itu saja — script menginstall ansible + terraform + openssh/sqlite3, generate SSH key,
+download binary dari GitHub Release, dan pasang systemd service (restart otomatis).
 
-**Windows** — download exe release + autostart (Scheduled Task):
-
-```cmd
-set REPO=owner/repo
-install.bat
-```
-
-> Ganti `<USER>`/`owner/repo` dengan repo GitHub kamu (lihat "Release" di bawah).
-> Deps Linux (ansible/terraform) tetap di-install via `install.sh` di dalam WSL.
+Env opsional: `PANEL_REPO=Nikkoadr/ansible PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
 
 Buka **http://localhost:8080** · login default **`admin / admin123`** → segera ganti di **Settings**.
 
-## Release (maintainer)
+## Dev (WSL)
 
 ```bash
 cd proxmox-panel
-cargo build --release                       # -> target/release/proxmox-panel
-# Linux:  cross atau build di WSL/CI -> upload sebagai proxmox-panel-linux-x86_64
-# Windows: target/release/proxmox-panel.exe -> upload sebagai proxmox-panel-windows-x86_64.exe
+./start.sh        # PORT=8080 PANEL_DATA=./data cargo run
+# atau: make dev
 ```
 
-Buat GitHub Release dengan tag (mis. `v2.1.0`) berisi kedua asset di atas,
-lalu arahkan `PANEL_REPO`/`REPO` ke repo tersebut. Contoh workflow CI: build
-matrix `ubuntu-latest` + `windows-latest`, upload artifacts ke release.
+## Release (maintainer)
+
+Build binary Linux dan upload ke GitHub Release repo `Nikkoadr/ansible` dengan tag
+(mis. `v2.1.0`) sebagai asset **`proxmox-panel-linux-x86_64`**:
+
+```bash
+cd proxmox-panel
+cargo build --release
+# upload target/release/proxmox-panel sebagai proxmox-panel-linux-x86_64
+```
+
+Contoh via GitHub CLI:
+
+```bash
+gh release create v2.1.0 target/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ansible
+```
+
+`install.sh` mengambil `latest` secara default (`PANEL_VERSION` untuk pin versi).
 
 ## Service / restart tetap jalan
 
-* **Linux/systemd** (dibuat otomatis oleh `install.sh`): `systemctl status proxmox-panel`
-* **WSL tanpa systemd**: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, lalu `wsl --shutdown`), atau jalankan manual `PANEL_DATA=... proxmox-panel`
-* **Windows**: Scheduled Task `ProxmoxPanel` (on logon) dari `install.bat`
+systemd unit dibuat otomatis oleh `install.sh`: `systemctl status proxmox-panel`.
+WSL tanpa systemd: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, lalu `wsl --shutdown`), atau jalankan manual `PANEL_DATA=... proxmox-panel`.
 
 ## Data & login
 
@@ -58,43 +62,31 @@ matrix `ubuntu-latest` + `windows-latest`, upload artifacts ke release.
 
 ---
 
-## Requirements
+## Requirements (dipasang otomatis oleh `install.sh`)
 
-- **Rust** 1.75+ (`cargo --version`)
-- **WSL** (Ubuntu) — untuk `terraform` / `ansible` / `ssh`. Tanpa WSL panel tetap jalan (simulated mode).
-- Opsional di dalam WSL: `terraform`, `ansible`
+- Ubuntu / Debian / WSL + `ansible`, `terraform`, `openssh-client`
 - **Proxmox VE** + API Token: Datacenter → Access → API Tokens (`root@pam!panel`), uncheck *Privilege Separation* kalau mau full.
 
-## Quick Start (Windows)
+## SSH key (remote mode, sekali saja)
 
-```
-proxmox-panel\start.bat        :: build release + run :8080
-proxmox-panel\start-dev.bat    :: cargo run (dev)
-```
-
-Buka: **http://localhost:8080** · Health: **/health.html**
-
-## SSH via WSL (remote mode)
-
-Di PowerShell sekali saja:
-
-```powershell
-wsl bash -lc "ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519; ssh-copy-id root@192.168.1.100"
-wsl bash -lc "ssh -o BatchMode=yes root@192.168.1.100 'echo ok; pveversion | head -1'"
+```bash
+ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519
+ssh-copy-id -p 2902 root@103.156.16.153
+ssh -o BatchMode=yes -p 2902 root@103.156.16.153 'echo ok; pveversion | head -1'
 ```
 
-Lalu di form New Cluster: centang *Remote mode*, isi SSH host/user/port, klik **Test SSH via WSL**.
-Backend menjalankan: `wsl ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@host "..."`.
+Lalu di form New Cluster: centang *Remote mode*, isi SSH host/user/port, klik **Test SSH**.
+Backend menjalankan: `ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@host "..."`.
 
 ## API Endpoints
 
 | Method | Endpoint | Deskripsi |
 |--------|----------|-----------|
-| GET | `/api/health` | Server time + status WSL |
-| GET | `/api/tools` | Versi terraform/ansible/ssh (lokal & WSL) |
-| GET | `/api/realtime/summary` | Counter clusters + WSL (poll 5s, dashboard) |
+| GET | `/api/health` | Server time + status runtime |
+| GET | `/api/tools` | Versi terraform/ansible/ssh (native + compat) |
+| GET | `/api/realtime/summary` | Counter clusters (poll 5s, dashboard) |
 | POST | `/api/health/proxmox-test` | Test Proxmox API Token `{proxmox_url, proxmox_user, token_id, token_secret, verify_tls}` |
-| POST | `/api/ssh/test` | Test SSH via WSL `{ssh_host, ssh_user, ssh_port}` |
+| POST | `/api/ssh/test` | Test SSH `{ssh_host, ssh_user, ssh_port}` (+ diagnosa key saat gagal) |
 | GET/POST | `/api/clusters` | List / create (wajib `name` + `token_secret`) |
 | GET | `/api/clusters/:id/status` | Status + progress + logs |
 | POST | `/api/clusters/:id/deploy` | Deploy async (background task) |
@@ -107,12 +99,12 @@ Backend menjalankan: `wsl ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@
 ## Flow Deployment
 
 1. Isi form (token + target node + template) → **Test Proxmox** harus OK.
-2. Pilih mode: kosongkan SSH host = **WSL lokal**; isi SSH host = **remote via `wsl ssh`**.
+2. Pilih mode: kosongkan SSH host = **eksekusi lokal**; isi SSH host = **remote via `ssh`**.
 3. Create → Deploy → backend:
    - test Proxmox `/version` (live),
    - tulis `infra/terraform/<id>/{main.tf, terraform.tfvars (redacted), inventory.ini}`,
-   - lokal: cek tools di WSL + `terraform init -backend=false` (proof, non-destruktif),
-   - remote: `ssh_test_via_wsl` + cek `terraform/ansible --version` di server,
+   - lokal: cek tools + `terraform init -backend=false` (proof, non-destruktif),
+   - remote: test SSH + cek `terraform/ansible --version` di server,
    - fase K8s (kubeadm, Calico, Nginx) sebagai log progres,
    - status `running` 100%.
 4. Log mengalir realtime ke `cluster-detail.html` via WS; kalau WS putus, polling 3s backup.
@@ -123,15 +115,19 @@ Backend menjalankan: `wsl ssh -o BatchMode=yes -o ConnectTimeout=8 -p PORT user@
 proxmox-panel/
 ├── Cargo.toml
 ├── src/
-│   ├── main.rs      # Axum + ServeDir(static/) + fallback index.html
+│   ├── main.rs      # Axum + static + login guard
 │   ├── routes.rs    # REST + WS + deployment engine + terraform filegen
 │   ├── models.rs    # Cluster (token_id/token_secret, ssh_host/port), LogEntry
-│   ├── store.rs     # DashMap + broadcast channel realtime
+│   ├── store.rs     # SQLite-backed state + broadcast realtime
+│   ├── db.rs        # SQLite (clusters, logs, users, sessions, settings)
+│   ├── auth.rs      # login cookie + argon2 + ganti password
 │   ├── proxmox.rs   # PVEAPIToken client, /version, /nodes
-│   └── exec.rs      # wsl bash -lc, ssh_test_via_wsl, tools_summary
-├── static/          # SB Admin 2 (CDN): index, new-cluster, cluster-detail, health + js/
+│   └── exec.rs      # exec lokal, ssh, tools_summary + diagnosa auth
+├── static/          # SB Admin 2 (CDN): login, index, new-cluster, cluster-detail, health, settings + js/
 ├── infra/terraform/ # generated per-cluster (gitignored)
-├── start.bat / start-dev.bat / Makefile
+├── data/            # panel.db SQLite (gitignored, via PANEL_DATA)
+├── install.sh       # one-line installer (apt deps + key + binary + systemd)
+├── start.sh / Makefile
 ```
 
 ## Troubleshooting

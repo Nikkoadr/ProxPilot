@@ -38,7 +38,7 @@ async function testProxmox(){
 }
 async function testSsh(){
   const out=document.getElementById('sshOut');
-  out.textContent='testing via WSL ssh...';
+  out.textContent='testing ssh...';
   try{const r=await apiPost('/api/ssh/test',{ssh_host:val('ssh_host'),ssh_user:val('ssh_user_remote')||'root',ssh_port:num('ssh_port',22)});
     out.textContent=JSON.stringify(r,null,2);
   }catch(e){out.textContent=String(e);}
