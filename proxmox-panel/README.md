@@ -11,42 +11,70 @@ storage **SQLite**, login **admin + password (dapat diubah)**.
 ## Install 1 perintah (WSL / Ubuntu / Debian)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/main/proxmox-panel/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh | bash
 ```
 
-Itu saja — script menginstall ansible + terraform + openssh/sqlite3, generate SSH key,
-download binary dari GitHub Release, dan pasang systemd service (restart otomatis).
+Itu saja — script menginstall **rust +** ansible + terraform + openssh/sqlite3, generate SSH key,
+lalu pasang binary (dari GitHub Release, atau **build dari source otomatis** kalau Release belum ada),
+dan pasang systemd service (restart otomatis).
 
 Env opsional: `PANEL_REPO=Nikkoadr/ansible PANEL_VERSION=v2.1.0 ADMIN_USER=admin ADMIN_PASS=rahasia DATA_DIR=/var/lib/proxmox-panel NO_SERVICE=1`.
 
+### Repo private (butuh token)
+
+`raw.githubusercontent.com` + release assets repo private tidak bisa diakses anonim —
+customer harus menyertakan Personal Access Token (classic, scope **`repo`**):
+
+```bash
+curl -fsSL -H "Authorization: Bearer ghp_XXXX" \
+  https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh \
+  | GITHUB_TOKEN=ghp_XXXX bash
+```
+
+Token diteruskan ke semua request GitHub (API + download asset). Catatan:
+
+* Token = kredensial: bagikan hanya ke customer yang berhak, dan pakai token
+  khusus installer (jangan token pribadi utama). Revoke/rotasi dari Settings GitHub bila bocor.
+* Alternatif tanpa token per customer: repo **public** (cukup release + `install.sh` yang public; kode lain boleh tetap private di repo terpisah).
+
 Buka **http://localhost:8080** · login default **`admin / admin123`** → segera ganti di **Settings**.
 
-## Dev (WSL)
+## Dev (edit Windows, run WSL)
+
+Edit file di Windows seperti biasa. Build + run selalu di WSL agar binary-nya Linux
+(`start.sh` memakai `target-linux/` terpisah supaya tidak bentrok dengan `target/` Windows):
 
 ```bash
-cd proxmox-panel
+# di WSL, sekali saja: Rust + C compiler
+sudo apt install -y build-essential pkg-config curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source ~/.cargo/env
+
+# tiap kali mau jalan:
+cd /mnt/d/laragon/www/ansible/proxmox-panel   # sesuaikan path repo
 ./start.sh        # PORT=8080 PANEL_DATA=./data cargo run
-# atau: make dev
 ```
 
-## Release (maintainer)
+## Release (2 cara, asset wajib `proxmox-panel-linux-x86_64`)
 
-Build binary Linux dan upload ke GitHub Release repo `Nikkoadr/ansible` dengan tag
-(mis. `v2.1.0`) sebagai asset **`proxmox-panel-linux-x86_64`**:
+**A. Otomatis via CI (disarankan)** — push tag, binary di-build + ditempel ke Release:
 
 ```bash
-cd proxmox-panel
+git tag panel-v2.1.0
+git push origin panel-v2.1.0
+# -> .github/workflows/panel-release.yml membuat Release + asset otomatis
+```
+
+**B. Manual** — build di WSL lalu upload:
+
+```bash
+cd /mnt/d/laragon/www/ansible/proxmox-panel
 cargo build --release
-# upload target/release/proxmox-panel sebagai proxmox-panel-linux-x86_64
+gh release create panel-v2.1.0 target-linux/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ansible
 ```
 
-Contoh via GitHub CLI:
-
-```bash
-gh release create v2.1.0 target/release/proxmox-panel#proxmox-panel-linux-x86_64 --repo Nikkoadr/ansible
-```
-
-`install.sh` mengambil `latest` secara default (`PANEL_VERSION` untuk pin versi).
+`install.sh` mengambil Release `latest` secara default (`PANEL_VERSION` untuk pin versi,
+mis. `PANEL_VERSION=panel-v2.1.0`).
 
 ## Service / restart tetap jalan
 

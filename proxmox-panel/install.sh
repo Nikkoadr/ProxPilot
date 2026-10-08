@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Proxmox Panel — one-line installer (Ubuntu / Debian / WSL).
 #
-#   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/main/proxmox-panel/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ansible/master/proxmox-panel/install.sh | bash
 #
 # Env overrides:
 #   PANEL_REPO=owner/repo   GitHub repo hosting releases (default Nikkoadr/ansible)
@@ -17,13 +17,29 @@ DATA_DIR="${DATA_DIR:-/var/lib/proxmox-panel}"
 BIN="/usr/local/bin/proxmox-panel"
 SERVICE="proxmox-panel"
 
+# Repo PRIVATE: export GITHUB_TOKEN=<personal-access-token> sebelum install.
+# Token butuh akses baca repo (classic PAT: scope `repo`).
+# Tanpa token, repo harus PUBLIC (raw + release assets butuh akses anonim).
+AUTH=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  echo "(private mode: using GITHUB_TOKEN)"
+fi
+
 SUDO=""
 if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
 
-echo "==> [1/6] system deps (openssh, ansible, sqlite3)..."
+echo "==> [1/6] system deps (openssh, ansible, sqlite3, build tools)..."
 $SUDO apt-get update -qq
-$SUDO apt-get install -y -qq openssh-client curl ca-certificates gpg sqlite3 ansible lsb-release > /dev/null
+$SUDO apt-get install -y -qq openssh-client curl ca-certificates gpg sqlite3 ansible lsb-release build-essential pkg-config git > /dev/null
 echo "      ansible: $(ansible --version 2>/dev/null | head -1 || echo MISSING)"
+
+echo "==> [1b/6] rust toolchain (cargo)..."
+if ! command -v cargo >/dev/null 2>&1; then
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+  export PATH="$HOME/.cargo/bin:$PATH"
+fi
+echo "      cargo: $(cargo --version 2>/dev/null || echo MISSING)"
 
 echo "==> [2/6] terraform (HashiCorp repo)..."
 if ! command -v terraform >/dev/null 2>&1; then
@@ -47,16 +63,31 @@ chmod 600 "$HOME/.ssh/id_ed25519" 2>/dev/null || true
 
 echo "==> [4/6] panel binary ($REPO @ $VERSION)..."
 if [[ "$VERSION" == "latest" ]]; then
-  TAG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -m1 '"tag_name"' | cut -d'"' -f4)"
+  # '|| true' agar set -o pipefail tidak mematikan script saat API 404 (belum ada Release).
+  TAG="$(curl -fsSL "${AUTH[@]}" "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep -m1 '"tag_name"' | cut -d'"' -f4 || true)"
 else
   TAG="$VERSION"
 fi
-[[ -z "${TAG:-}" ]] && { echo "ERROR: cannot resolve release tag" >&2; exit 1; }
-URL="https://github.com/$REPO/releases/download/$TAG/proxmox-panel-linux-x86_64"
-curl -fsSL -o /tmp/proxmox-panel "$URL"
-$SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
-rm -f /tmp/proxmox-panel
-echo "      installed: $BIN ($TAG)"
+URL="https://github.com/$REPO/releases/download/${TAG:-none}/proxmox-panel-linux-x86_64"
+if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"; then
+  $SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
+  rm -f /tmp/proxmox-panel
+  echo "      installed: $BIN ($TAG)"
+else
+  echo "      no release asset — building from source (this takes a few minutes)..."
+  export PATH="$HOME/.cargo/bin:$PATH"
+  command -v cargo >/dev/null || { echo "ERROR: cargo missing after toolchain install" >&2; exit 1; }
+  CLONE_URL="https://github.com/$REPO.git"
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    CLONE_URL="https://oauth2:${GITHUB_TOKEN}@github.com/$REPO.git"
+  fi
+  rm -rf /tmp/panel-src
+  git clone --depth 1 --branch master "$CLONE_URL" /tmp/panel-src
+  (cd /tmp/panel-src/proxmox-panel && cargo build --release)
+  $SUDO install -m 0755 /tmp/panel-src/proxmox-panel/target/release/proxmox-panel "$BIN"
+  rm -rf /tmp/panel-src
+  echo "      installed: $BIN (built from source)"
+fi
 
 echo "==> [5/6] data dir ($DATA_DIR)..."
 $SUDO mkdir -p "$DATA_DIR/infra/terraform"
@@ -100,7 +131,7 @@ fi
 
 echo
 echo "==================================================="
-echo " Proxmox Panel ready!"
+echo " Proxmox Panel ready! (rust + deps + binary + service)"
 echo " URL   : http://localhost:8080"
 echo " Login : ${ADMIN_USER:-admin} / (your ADMIN_PASS or admin123)"
 echo " DB    : $DATA_DIR/panel.db"

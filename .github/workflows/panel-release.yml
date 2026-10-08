@@ -1,0 +1,28 @@
+name: panel-release
+
+on:
+  push:
+    tags:
+      - "panel-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxmox-panel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Upload asset to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/proxmox-panel#proxmox-panel-linux-x86_64
