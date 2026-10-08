@@ -69,7 +69,7 @@ else
   TAG="$VERSION"
 fi
 URL="https://github.com/$REPO/releases/download/${TAG:-none}/proxmox-panel-linux-x86_64"
-if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"; then
+if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL" 2>/dev/null; then
   $SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
   rm -f /tmp/proxmox-panel
   echo "      installed: $BIN ($TAG)"

@@ -28,7 +28,12 @@ fi
 
 echo "Updating to $TAG..."
 URL="https://github.com/$REPO/releases/download/$TAG/proxmox-panel-linux-x86_64"
-curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"
+if ! curl -fsSL "${AUTH[@]}" -o /tmp/proxmox-panel "$URL"; then
+  echo "ERROR: asset 'proxmox-panel-linux-x86_64' tidak ada di Release $TAG." >&2
+  echo "Cek: https://github.com/$REPO/releases/tag/$TAG" >&2
+  echo "Rilis binary baru: push tag 'panel-vX.Y.Z' (CI build otomatis) lalu update lagi." >&2
+  exit 1
+fi
 $SUDO install -m 0755 /tmp/proxmox-panel "$BIN"
 rm -f /tmp/proxmox-panel
 
