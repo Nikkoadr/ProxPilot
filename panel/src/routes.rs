@@ -223,6 +223,7 @@ async fn summary(State(s): State<AppState>) -> Json<Value> {
         "running": running, "deploying": deploying,
         "master_nodes": masters, "worker_nodes": workers,
         "wsl_available": wsl,
+        "runtime": exec::runtime_info_cached(wsl),
         "server_time": chrono::Utc::now(),
     }))
 }

@@ -9,8 +9,9 @@ function setConn(ok,text){const d=document.getElementById('connDot'),t=document.
 async function refreshConn(){
   try{
     const [h,s]=await Promise.all([apiGet('/api/health'),apiGet('/api/realtime/summary')]);
-    const wsl=h?.wsl?.available;
-    setConn(true,`WSL ${wsl?'ON':'OFF'} · ${s.clusters_total??0} clusters · ${s.running??0} running`);
+    const rt=s?.runtime||h?.runtime||{};
+    const lbl=rt.label||(h?.wsl?.available?'Windows + WSL':'native');
+    setConn(true,`${lbl} · ${s.clusters_total??0} clusters · ${s.running??0} running`);
   }catch(e){ setConn(false,'backend offline'); }
 }
 function markActive(){

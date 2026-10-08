@@ -475,6 +475,34 @@ fn shell_word(s: &str) -> String {
     }
 }
 
+/// Di mana binary panel berjalan? Menentukan tool path utama
+/// sekaligus apa yang harus ditampilkan dashboard.
+///
+/// - `windows`: binary di Windows, tools via jembatan WSL.
+/// - `wsl-native`: binary di dalam WSL2 Ubuntu (native Linux) — kartu
+///   "WSL" di dashboard tidak relevan, tool lokal yang dipakai.
+/// - `linux`: VPS / bare metal Linux.
+/// - `windows-native`: Windows tanpa WSL.
+pub fn runtime_info_cached(wsl: bool) -> serde_json::Value {
+    if wsl {
+        return serde_json::json!({"mode": "windows", "label": "Windows + WSL bridge", "primary": "wsl"});
+    }
+    if std::path::Path::new("/proc/version").exists() {
+        let ver = std::fs::read_to_string("/proc/version")
+            .unwrap_or_default()
+            .to_lowercase();
+        if ver.contains("microsoft") || ver.contains("wsl") {
+            return serde_json::json!({"mode": "wsl-native", "label": "Linux di dalam WSL2 (native)", "primary": "local"});
+        }
+        return serde_json::json!({"mode": "linux", "label": "Linux native", "primary": "local"});
+    }
+    serde_json::json!({"mode": "windows-native", "label": "Windows native (tanpa WSL)", "primary": "local"})
+}
+
+pub fn runtime_info() -> serde_json::Value {
+    runtime_info_cached(wsl_available())
+}
+
 /// Ringkasan tools untuk /api/tools.
 pub fn tools_summary() -> serde_json::Value {
     let wsl = wsl_available();
@@ -507,6 +535,7 @@ pub fn tools_summary() -> serde_json::Value {
         )
     };
     serde_json::json!({
+        "runtime": runtime_info_cached(wsl),
         "wsl": { "available": wsl, "distros": wsl_distros() },
         "terraform": {
             "local": { "ok": t_local.ok, "output": first_line(&t_local.output), "ms": t_local.ms },

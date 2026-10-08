@@ -1,8 +1,24 @@
+let step={key:false,ssh:false,prox:false};
+function setStep(n,ok){
+  step[n]=!!ok;
+  const map={key:'st1',ssh:'st2',prox:'st3'};
+  const el=document.getElementById(map[n]);
+  if(el)el.className='badge mr-1 '+(ok?'badge-success':'badge-secondary');
+  const done=Object.values(step).filter(Boolean).length;
+  document.title=`Proxmox Panel — Health & SSH (${done}/3)`;
+}
 async function loadTools(){
   try{
     const t=await apiGet('/api/tools');
-    document.getElementById('wslState').innerHTML=t.wsl?.available?'<span class="badge badge-success">available</span>':'<span class="badge badge-danger">unavailable</span>';
-    document.getElementById('wslDistros').textContent=t.wsl?.distros||'-';
+    const rt=t.runtime||{};
+    const wslEl=document.getElementById('wslState');
+    if(rt.primary==='local'){
+      wslEl.innerHTML='<span class="badge badge-success">native</span> <span class="small text-muted">'+esc(rt.label||'panel jalan langsung di Linux')+'</span>';
+      document.getElementById('wslDistros').textContent='Tool lokal yang dipakai — bagian WSL di bawah tidak relevan.';
+    }else{
+      wslEl.innerHTML=t.wsl?.available?'<span class="badge badge-success">available</span>':'<span class="badge badge-danger">unavailable</span>';
+      document.getElementById('wslDistros').textContent=t.wsl?.distros||'-';
+    }
     row('TfLocal',t.terraform?.local);row('TfWsl',t.terraform?.wsl);
     row('AnLocal',t.ansible?.local);row('AnWsl',t.ansible?.wsl);
     row('SshLocal',t.ssh?.local);row('SshWsl',t.ssh?.wsl);
@@ -20,16 +36,48 @@ async function testProxmox(){
     token_id:document.getElementById('pTokenId').value.trim(),
     token_secret:document.getElementById('pTokenSecret').value,
     verify_tls:document.getElementById('pVerify').checked};
-  try{out.textContent=JSON.stringify(await apiPost('/api/health/proxmox-test',body),null,2);}
-  catch(e){out.textContent=String(e);}
+  try{
+    const r=await apiPost('/api/health/proxmox-test',body);
+    out.textContent=JSON.stringify(r,null,2);
+    setStep('prox',!!r.ok);
+  }
+  catch(e){out.textContent=String(e);setStep('prox',false);}
 }
 async function testSsh(){
   const out=document.getElementById('sshOut');out.textContent='testing ssh...';
   const body={ssh_host:document.getElementById('sHost').value.trim(),
     ssh_user:document.getElementById('sUser').value.trim()||'root',
     ssh_port:parseInt(document.getElementById('sPort').value,10)||22};
-  try{out.textContent=JSON.stringify(await apiPost('/api/ssh/test',body),null,2);}
+  try{
+    const r=await apiPost('/api/ssh/test',body);
+    out.textContent=JSON.stringify(r,null,2);
+    setStep('ssh',!!r.ok);
+  }
+  catch(e){out.textContent=String(e);setStep('ssh',false);}
+}
+async function loadKey(){
+  const st=document.getElementById('keyState'), pre=document.getElementById('pubKey');
+  try{
+    const k=await apiGet('/api/ssh/key');
+    if(k.exists){st.className='badge badge-success';st.textContent='ada ('+(k.via||'')+')';pre.textContent=k.public_key;setStep('key',true);}
+    else{st.className='badge badge-warning';st.textContent='belum ada';pre.textContent='(belum ada — klik Generate key)';setStep('key',false);}
+  }catch(e){st.className='badge badge-danger';st.textContent='error';pre.textContent=String(e);}
+}
+async function genKey(){
+  const out=document.getElementById('copyOut');out.textContent='generating...';
+  try{await apiPost('/api/ssh/keygen',{});await loadKey();out.textContent='Key siap → lanjut langkah 2a.';}
   catch(e){out.textContent=String(e);}
+}
+async function copyId(){
+  const out=document.getElementById('copyOut');out.textContent='copying key to server...';
+  const v=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
+  try{
+    const r=await apiPost('/api/ssh/copy-id',{ssh_host:v('sHost'),ssh_user:v('sUser')||'root',
+      ssh_port:parseInt(v('sPort'),10)||22,ssh_password:document.getElementById('cPass').value});
+    document.getElementById('cPass').value='';
+    out.textContent=(r.ok?'OK — key tersalin. Menjalankan Test SSH otomatis...\n':'GAGAL.\n')+JSON.stringify(r,null,2);
+    if(r.ok)await testSsh();
+  }catch(e){out.textContent=String(e);}
 }
 document.addEventListener('DOMContentLoaded',()=>{
   loadTools();setInterval(loadTools,10000);
@@ -39,27 +87,3 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('btnCopyId').onclick=copyId;
   loadKey();
 });
-async function loadKey(){
-  const st=document.getElementById('keyState'), pre=document.getElementById('pubKey');
-  try{
-    const k=await apiGet('/api/ssh/key');
-    if(k.exists){st.className='badge badge-success';st.textContent='ada ('+(k.via||'')+')';pre.textContent=k.public_key;}
-    else{st.className='badge badge-warning';st.textContent='belum ada';pre.textContent='(belum ada — klik Generate key)';}
-  }catch(e){st.className='badge badge-danger';st.textContent='error';pre.textContent=String(e);}
-}
-async function genKey(){
-  const out=document.getElementById('copyOut');out.textContent='generating...';
-  try{await apiPost('/api/ssh/keygen',{});await loadKey();out.textContent='Key siap. Salin ke server di bawah.';}
-  catch(e){out.textContent=String(e);}
-}
-async function copyId(){
-  const out=document.getElementById('copyOut');out.textContent='copying key to server...';
-  const v=id=>{const el=document.getElementById(id);return el?el.value.trim():'';};
-  try{
-    const r=await apiPost('/api/ssh/copy-id',{ssh_host:v('cHost'),ssh_user:v('cUser')||'root',
-      ssh_port:parseInt(v('cPort'),10)||22,ssh_password:document.getElementById('cPass').value});
-    document.getElementById('cPass').value='';
-    out.textContent=(r.ok?'OK — key tersalin. Test SSH di atas sekarang.\n':'GAGAL.\n')+JSON.stringify(r,null,2);
-    if(r.ok){const s=document.getElementById('sHost');if(s&&!s.value)s.value=v('cHost');}
-  }catch(e){out.textContent=String(e);}
-}

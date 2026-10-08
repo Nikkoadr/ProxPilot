@@ -28,14 +28,23 @@ function renderNodes(nodes){
 function renderTools(t){
   const el=document.getElementById('toolsRow');
   if(!el||!t)return;
+  const rt=t.runtime||{};
+  const native=rt.primary==='local';
   const wsl=t.wsl?.available;
   const card=(title,ok,sub)=>`<div class="col-md-3 mb-2"><div class="border rounded p-2">
     <div><span class="rounded-circle d-inline-block ${ok?'bg-success':'bg-danger'}" style="width:10px;height:10px"></span> <strong>${title}</strong></div>
     <div class="small text-muted">${esc(sub||'')}</div></div></div>`;
+  // Tool lokal vs WSL: tampilkan yang relevan dengan runtime (lainnya noise).
+  const tf=native?t.terraform?.local:t.terraform?.wsl;
+  const an=native?t.ansible?.local:t.ansible?.wsl;
+  const sh=native?t.ssh?.local:t.ssh?.wsl;
+  const env=native
+    ?card('Runtime',true,(rt.label||'native Linux')+' — tool lokal dipakai')
+    :card('WSL bridge',!!wsl,(t.wsl?.distros||'').split('\n').slice(0,2).join(' · ').slice(0,80));
   el.innerHTML=
-    card('Terraform',!!t.terraform?.local?.ok,t.terraform?.local?.output)+
-    card('Ansible',!!t.ansible?.local?.ok,t.ansible?.local?.output)+
-    card('SSH',!!t.ssh?.local?.ok,t.ssh?.local?.output)+
-    card('WSL compat',!!wsl,(t.wsl?.distros||'').split('\n').slice(0,2).join(' · ').slice(0,80));
+    card('Terraform',!!tf?.ok,tf?.output)+
+    card('Ansible',!!an?.ok,an?.output)+
+    card('SSH',!!sh?.ok,sh?.output)+
+    env;
 }
 document.addEventListener('DOMContentLoaded',()=>{loadDashboard();setInterval(loadDashboard,5000);});

@@ -116,6 +116,7 @@ async fn health_open() -> impl IntoResponse {
         "ok": true,
         "server_time": chrono::Utc::now(),
         "wsl": { "available": wsl },
+        "runtime": exec::runtime_info_cached(wsl),
         "mode": if wsl { "wsl" } else { "native" },
     }))
 }
