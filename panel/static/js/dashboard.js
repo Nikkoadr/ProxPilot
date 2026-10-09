@@ -1,19 +1,26 @@
+function setText(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+
 async function loadDashboard() {
   try {
+    // Tiap API diberi catch sendiri agar satu gagal tidak memblank-kan semua.
     const [summary, clusters, nodes, tools, allVms, sshKey] = await Promise.all([
-      apiGet('/api/realtime/summary'),
-      apiGet('/api/clusters'),
-      apiGet('/api/nodes'),
-      apiGet('/api/tools'),
-      apiGet('/api/vms').catch(() => ({ vms: [] })),
+      apiGet('/api/realtime/summary').catch(() => null),
+      apiGet('/api/clusters').catch((e) => ({ _err: String((e && e.message) || e) })),
+      apiGet('/api/nodes').catch(() => []),
+      apiGet('/api/tools').catch(() => null),
+      apiGet('/api/vms').catch((e) => ({ vms: [], _err: String((e && e.message) || e) })),
       apiGet('/api/ssh/key').catch(() => ({})),
     ]);
 
     // Stats
-    setText('statVms', summary.master_nodes + summary.worker_nodes);
-    setText('statDeploying', summary.deploying);
-    setText('statClusters', summary.clusters_total);
-    setText('statNodes', Array.isArray(nodes) ? nodes.length : 0);
+    setText('statVms', summary ? summary.master_nodes + summary.worker_nodes : '?');
+    setText('statDeploying', summary ? summary.deploying : '?');
+    setText('statClusters', summary ? summary.clusters_total : (Array.isArray(clusters) ? clusters.length : '?'));
+    const liveNodes = Array.isArray(nodes) ? nodes.filter(n => n.live !== false && !String(n.status || '').includes('mock')) : [];
+    setText('statNodes', Array.isArray(nodes) ? (liveNodes.length || (nodes.length + ' (mock?)')) : '?');
 
     // Quick: SSH key
     const ks = document.getElementById('qKeyState');
@@ -81,8 +88,12 @@ function renderVms(data) {
   const tb = document.getElementById('vmRows');
   if (!tb) return;
   const vms = (data && data.vms) || [];
+  if (data && data._err && !vms.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Gagal load VM: ' + esc(data._err) + '<br><span class="text-muted small">Cek koneksi Proxmox di Health.</span></td></tr>';
+    return;
+  }
   if (!vms.length) {
-    tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Belum ada VM. Clone dulu di halaman Clone VM setelah koneksi SSH &amp; API Proxmox tersedia.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Belum ada VM. Clone dulu di halaman Clone VM setelah koneksi SSH &amp; API Proxmox tersedia.</td></tr>';
     return;
   }
   tb.innerHTML = vms.map(v => {
@@ -108,12 +119,16 @@ function renderVms(data) {
       <td class="small">${uptime}</td>
       <td>${btns}</td>
     </tr>`;
-  }).filter(Boolean).join('') || '<tr><td colspan="7" class="text-center text-muted">Semua template, tidak ada VM biasa.</td></tr>';
+  }).filter(Boolean).join('') || '<tr><td colspan="6" class="text-center text-muted">Semua template, tidak ada VM biasa.</td></tr>';
 }
 
 function renderClusters(clusters) {
   const tb = document.getElementById('clusterRows');
   if (!tb) return;
+  if (clusters && clusters._err) {
+    tb.innerHTML = '<tr><td colspan="5" class="text-center text-danger">Gagal load cluster: ' + esc(clusters._err) + '</td></tr>';
+    return;
+  }
   tb.innerHTML = (clusters || []).length
     ? clusters.map(clusterRow).join('')
     : '<tr><td colspan="5" class="text-center text-muted">Belum ada cluster. Buat di <a href="/new-cluster.html">New Cluster</a>.</td></tr>';

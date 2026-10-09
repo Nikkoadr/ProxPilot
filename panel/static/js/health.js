@@ -67,7 +67,76 @@ async function testProxmox() {
     out.textContent = JSON.stringify(r, null, 2);
     out.style.borderLeft = r.ok ? '4px solid #1cc88a' : '4px solid #e74a3b';
     setStep('prox', !!r.ok);
+    if (r.ok) await detectNodes(true);
   } catch (e) { out.textContent = String(e); setStep('prox', false); }
+}
+
+async function detectNodes(silent) {
+  const hint = document.getElementById('nodeHint');
+  const nodeInput = document.getElementById('pNode');
+  try {
+    const nodes = await apiGet('/api/nodes');
+    const live = (Array.isArray(nodes) ? nodes : []).filter(n => n.live !== false && !String(n.status || '').includes('mock'));
+    if (!live.length) {
+      if (hint) hint.textContent = 'API belum mengembalikan node live — simpan koneksi dulu atau cek token.';
+      return;
+    }
+    const names = live.map(n => n.name).join(', ');
+    if (hint) { hint.className = 'form-text text-success'; hint.textContent = 'Node live: ' + names; }
+    if (nodeInput && !nodeInput.value.trim() && live[0]) nodeInput.value = live[0].name;
+    // Kalau input masih "pve" tapi live beda, koreksi otomatis.
+    if (nodeInput && live[0] && nodeInput.value.trim() === 'pve' && live[0].name !== 'pve') nodeInput.value = live[0].name;
+  } catch (e) {
+    if (!silent && hint) { hint.className = 'form-text text-danger'; hint.textContent = 'Gagal deteksi node: ' + (e.message || e); }
+  }
+}
+
+async function loadSetup() {
+  const out = document.getElementById('setupOut');
+  const saved = document.getElementById('setupSaved');
+  try {
+    const s = await apiGet('/api/setup');
+    if (s.proxmox_url) document.getElementById('pUrl').value = s.proxmox_url;
+    if (s.proxmox_user) document.getElementById('pUser').value = s.proxmox_user;
+    if (s.token_id) document.getElementById('pTokenId').value = s.token_id;
+    if (s.target_node) document.getElementById('pNode').value = s.target_node;
+    if (s.verify_tls) document.getElementById('pVerify').checked = true;
+    if (s.ssh_host) document.getElementById('sHost').value = s.ssh_host;
+    if (s.ssh_user) document.getElementById('sUser').value = s.ssh_user;
+    if (s.ssh_port) document.getElementById('sPort').value = s.ssh_port;
+    if (out) out.textContent = s.saved ? 'tersimpan (secret: ' + (s.has_token ? 'ada' : 'kosong') + ')' : 'belum disimpan';
+    if (saved) saved.textContent = s.saved ? 'tersimpan' : 'belum disimpan';
+  } catch (e) { if (out) out.textContent = 'Gagal load setup: ' + (e.message || e); }
+}
+
+async function saveSetup() {
+  const out = document.getElementById('setupOut');
+  const saved = document.getElementById('setupSaved');
+  out.textContent = 'menyimpan...';
+  const body = {
+    proxmox_url: document.getElementById('pUrl').value.trim(),
+    proxmox_user: document.getElementById('pUser').value.trim() || 'root@pam',
+    token_id: document.getElementById('pTokenId').value.trim(),
+    token_secret: document.getElementById('pTokenSecret').value,
+    verify_tls: document.getElementById('pVerify').checked,
+    target_node: document.getElementById('pNode').value.trim() || 'pve',
+    ssh_host: document.getElementById('sHost').value.trim(),
+    ssh_user: document.getElementById('sUser').value.trim() || 'root',
+    ssh_port: parseInt(document.getElementById('sPort').value, 10) || 22,
+  };
+  try {
+    const r = await fetch('/api/setup', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    out.textContent = 'OK — ' + (j.message || 'tersimpan') + '. Dashboard / Clone VM sekarang memakai koneksi ini.';
+    out.style.borderLeft = '4px solid #1cc88a';
+    if (saved) saved.textContent = 'tersimpan';
+    document.getElementById('pTokenSecret').value = '';
+    await loadSetup();
+  } catch (e) {
+    out.textContent = String(e.message || e);
+    out.style.borderLeft = '4px solid #e74a3b';
+  }
 }
 
 async function testSsh() {
@@ -145,5 +214,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnSsh').onclick = testSsh;
   document.getElementById('btnKeygen').onclick = genKey;
   document.getElementById('btnCopyId').onclick = copyId;
+  document.getElementById('btnSaveSetup').onclick = saveSetup;
+  document.getElementById('btnNodes').onclick = () => detectNodes(false);
   loadKey();
+  loadSetup();
 });

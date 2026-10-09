@@ -24,14 +24,48 @@ async function loadSetup() {
 
 async function loadTemplates() {
   try {
-    templatesList = await apiGet('/api/templates');
+    const raw = await apiGet('/api/templates');
+    // Backend baru: {templates, live, source, warning}. Backend lama: array langsung.
+    const isObj = raw && !Array.isArray(raw) && Array.isArray(raw.templates);
+    templatesList = isObj ? raw.templates : (Array.isArray(raw) ? raw : []);
+    const live = isObj ? !!raw.live : templatesList.some(t => t.vmid != null);
     const sel = document.getElementById('cTemplate');
     sel.innerHTML = '<option value="">-- Pilih Template --</option>' +
-      (templatesList || []).map(t => `<option value="${esc(t.name)}">${esc(t.name)}${t.vmid ? ' (vmid ' + t.vmid + ')' : ''}</option>`).join('');
-    document.getElementById('snTemplates').textContent = templatesList.length + ' templates';
+      (templatesList || []).map(t => {
+        const vmidTxt = t.vmid ? ' (vmid ' + t.vmid + ')' : '';
+        const desc = t.description ? ' — ' + t.description : '';
+        return `<option value="${esc(t.name)}">${esc(t.name)}${vmidTxt}${esc(desc)}</option>`;
+      }).join('');
+    const badge = document.getElementById('tplLiveBadge');
+    if (badge) {
+      badge.className = 'badge ' + (live ? 'badge-success' : 'badge-warning');
+      badge.textContent = live ? 'live' : 'fallback';
+    }
+    const warn = document.getElementById('tplWarn');
+    if (warn) {
+      const nodeTxt = (isObj && raw.node) ? ' Node: ' + raw.node + '.' : '';
+      const nodesTxt = (isObj && raw.nodes) ? ' (dicari di: ' + raw.nodes.join(', ') + ')' : '';
+      if (live && templatesList.length) {
+        warn.className = 'form-text text-success';
+        warn.textContent = templatesList.length + ' template live dari node Proxmox.' + nodeTxt;
+      } else if (isObj && raw.source === 'live-empty') {
+        warn.className = 'form-text text-danger';
+        warn.textContent = (raw.warning || 'Tidak ada template di node ini.') + nodeTxt + nodesTxt
+          + (raw.total_vms != null ? ' Total terlihat: ' + raw.total_vms + ' VM.' : '')
+          + (raw.sample && raw.sample.length ? ' Contoh: ' + raw.sample.slice(0, 5).join(' | ') : '');
+      } else {
+        warn.className = 'form-text text-warning';
+        warn.textContent = ((raw && raw.warning) || 'Proxmox belum terhubung — 5 template ini daftar statis, bukan live. Isi Setup / Test API di Health.') + nodeTxt;
+      }
+    }
+    document.getElementById('snTemplates').innerHTML = live
+      ? templatesList.length + ' template <span class="badge badge-success">live</span>'
+      : templatesList.length + ' template <span class="badge badge-warning">statis</span>';
   } catch (e) {
     document.getElementById('cTemplate').innerHTML = '<option value="">gagal load</option>';
     document.getElementById('snTemplates').textContent = 'error';
+    const warn = document.getElementById('tplWarn');
+    if (warn) { warn.className = 'form-text text-danger'; warn.textContent = 'Gagal load template: ' + (e.message || e); }
   }
 }
 
@@ -40,12 +74,15 @@ async function loadVms() {
     const r = await apiGet('/api/vms');
     vmList = r.vms || [];
     const live = vmList.filter(v => !v.template);
-    document.getElementById('snVms').textContent = live.length + ' VM';
+    const tplCount = (r.templates || vmList.filter(v => v.template)).length;
+    document.getElementById('snVms').textContent = live.length + ' VM · ' + tplCount + ' template';
+    // Tampilkan node asli dari API (bukan tebakan) agar ketahuan kalau Setup salah.
+    if (r.node) document.getElementById('snNode').textContent = r.node;
     renderVms(vmList);
   } catch (e) {
     document.getElementById('snVms').textContent = 'error';
     const tb = document.getElementById('vmRows');
-    if (tb) tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Tidak bisa load VM — pastikan Setup sudah diisi atau buat cluster dengan token API Proxmox.</td></tr>';
+    if (tb) tb.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Gagal load VM: ' + esc(String(e.message || e)) + '<br><span class="text-muted small">Pastikan Setup / token API Proxmox sudah benar di halaman Health.</span></td></tr>';
   }
 }
 
@@ -53,8 +90,9 @@ function renderVms(vms) {
   const tb = document.getElementById('vmRows');
   if (!tb) return;
   const nonTpl = vms.filter(v => !v.template);
+  const tplCount = vms.filter(v => v.template).length;
   if (!nonTpl.length) {
-    tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Belum ada VM (hanya template). Clone dulu di atas.</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="text-center text-muted">Belum ada VM' + (tplCount ? ' (' + tplCount + ' template terdeteksi di node, bukan VM)' : '') + '. Clone dulu di atas.</td></tr>';
     return;
   }
   tb.innerHTML = nonTpl.map(v => {

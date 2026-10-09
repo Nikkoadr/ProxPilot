@@ -16,6 +16,8 @@
 <li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
 <li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
 <li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
+<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
+<li class="nav-item" id="nav-settings"><a class="nav-link" href="/settings.html"><i class="fas fa-cog"></i><span>Settings</span></a></li>
 <hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
 </ul>
 <div id="content-wrapper" class="d-flex flex-column"><div id="content">
@@ -77,10 +79,25 @@
 </div>
 <div class="form-group"><label>Token secret</label><input id="pTokenSecret" type="password" class="form-control"></div>
 <div class="custom-control custom-checkbox mb-2"><input type="checkbox" class="custom-control-input" id="pVerify"><label class="custom-control-label" for="pVerify">Verify TLS (off = allow self-signed)</label></div>
+<div class="form-group"><label>Target node <span class="small text-muted">(nama asli dari API, bukan tebakan)</span></label>
+<div class="input-group"><input id="pNode" class="form-control" placeholder="pve">
+<div class="input-group-append"><button id="btnNodes" class="btn btn-outline-secondary btn-sm" type="button"><i class="fas fa-sync"></i> Deteksi</button></div></div>
+<small class="form-text text-muted" id="nodeHint">Klik Test API dulu, lalu Deteksi untuk isi otomatis.</small></div>
 <button id="btnProx" class="btn btn-warning btn-sm"><i class="fas fa-plug"></i> Test Proxmox API</button>
 <pre class="out mt-2" id="proxOut">not tested</pre>
 </div>
 </div>
+</div>
+</div>
+
+<!-- Langkah 4: Simpan Setup (wajib agar Clone VM / Dashboard bisa baca API) -->
+<div class="card shadow mb-4 border-left-success">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold text-success"><i class="fas fa-save"></i> Langkah 4 — Simpan Koneksi (Setup)</h6></div>
+<div class="card-body">
+<p class="small text-muted mb-2">Test saja <strong>tidak menyimpan</strong>. Klik simpan agar <code>/api/vms</code>, <code>/api/templates</code>, dan Clone VM memakai koneksi yang baru dites ini. Secret kosong = pakai yang tersimpan.</p>
+<button id="btnSaveSetup" class="btn btn-success btn-sm"><i class="fas fa-save"></i> Simpan koneksi ini</button>
+<span id="setupSaved" class="ml-2 small text-muted"></span>
+<pre class="out mt-2" id="setupOut">belum disimpan</pre>
 </div>
 </div>
 

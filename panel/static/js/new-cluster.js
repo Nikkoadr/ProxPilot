@@ -1,6 +1,17 @@
 async function init(){
   try{const c=await apiGet('/api/config');fill(c.defaults||{});}catch(e){}
   try{const t=await apiGet('/api/templates');fillTemplates(t);}catch(e){}
+  try{
+    const s=await apiGet('/api/setup');
+    if(s && (s.proxmox_url || s.target_node)){
+      const set=(id,v)=>{const el=document.getElementById(id);if(el&&el.value===''&&v)el.value=v;};
+      set('proxmox_url',s.proxmox_url);set('proxmox_user',s.proxmox_user);
+      set('token_id',s.token_id);set('target_node',s.target_node);
+      set('ssh_host',s.ssh_host);set('ssh_user_remote',s.ssh_user);
+      if(s.ssh_port){const el=document.getElementById('ssh_port');if(el&&el.value==='22')el.value=s.ssh_port;}
+      if(s.ssh_host){const el=document.getElementById('useRemote');if(el)el.checked=true;toggleRemote();}
+    }
+  }catch(e){}
   document.getElementById('btnProxmox').onclick=testProxmox;
   document.getElementById('btnSsh').onclick=testSsh;
   document.getElementById('form').onsubmit=submit;
@@ -34,8 +45,16 @@ function fill(d){
 }
 function fillTemplates(t){
   const s=document.getElementById('clone_template');
-  s.innerHTML='<option value="">Select template...</option>'+(t||[]).map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${esc(x.description||x.size||'')})</option>`).join('')
+  // Backend baru: {templates, live, source}. Backend lama: array langsung.
+  const list = Array.isArray(t) ? t : (t && Array.isArray(t.templates) ? t.templates : []);
+  const live = t && !Array.isArray(t) ? !!t.live : list.some(x => x.vmid != null);
+  s.innerHTML='<option value="">Select template...</option>'+(list||[]).map(x=>`<option value="${esc(x.name)}">${esc(x.name)} (${esc(x.description||x.size||'')})${x.vmid?' [vmid '+x.vmid+']':''}</option>`).join('')
     +'<option value="__custom">⌨ Custom / ketik manual...</option>';
+  let hint=document.getElementById('tplHint');
+  if(!live){
+    if(!hint){hint=document.createElement('small');hint.id='tplHint';hint.className='form-text text-warning';s.parentNode.appendChild(hint);}
+    hint.textContent='Fallback statis ('+list.length+' template) — bukan live Proxmox. Test API di bawah agar daftar live muncul.';
+  } else if(hint){hint.textContent='';hint.className='form-text text-success';hint.textContent=list.length+' template live dari Proxmox.';}
   const u=document.getElementById('ssh_user_vm');
   if(u)u.oninput=()=>{u.dataset.touched='1';};
 }

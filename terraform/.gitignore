@@ -1,0 +1,8 @@
+# Secret + state lokal — jangan commit.
+credentials.auto.tfvars
+*.auto.tfvars
+terraform.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform.tfstate.d/

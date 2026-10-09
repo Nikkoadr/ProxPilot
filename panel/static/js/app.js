@@ -1,6 +1,6 @@
 /* shared helpers */
 function goLogin(){ if(!location.pathname.includes('login')) location.href='/login.html'; }
-async function apiGet(p){const r=await fetch(p);if(r.status===401){goLogin();throw new Error('login required');}if(!r.ok)throw new Error('GET '+p+' -> '+r.status);return r.json();}
+async function apiGet(p){const r=await fetch(p);if(r.status===401){goLogin();throw new Error('login required');}if(!r.ok){let msg='GET '+p+' -> '+r.status;try{const j=await r.json();if(j&&j.error)msg=j.error;}catch(e){}throw new Error(msg);}return r.json();}
 async function apiPost(p,b){const r=await fetch(p,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});if(r.status===401){goLogin();throw new Error('login required');}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('POST '+p+' -> '+r.status));return j;}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function badgeFor(st){const m={pending:'secondary',deploying:'warning',provisioning:'warning',running:'success',error:'danger'};return m[st]||'secondary';}
@@ -16,16 +16,6 @@ async function refreshConn(){
 }
 function markActive(){
   const p=location.pathname;
-  // inject Settings nav on older pages if missing
-  const sb=document.getElementById('accordionSidebar');
-  if(sb && !document.getElementById('nav-settings')){
-    const h=document.getElementById('nav-health');
-    const li=document.createElement('li');
-    li.className='nav-item'; li.id='nav-settings';
-    li.innerHTML='<a class="nav-link" href="/settings.html"><i class="fas fa-cog"></i><span>Settings</span></a>';
-    if(h && h.parentNode) h.parentNode.insertBefore(li, h.nextSibling);
-    else sb.appendChild(li);
-  }
   document.querySelectorAll('#accordionSidebar .nav-item').forEach(li=>li.classList.remove('active'));
   let id='nav-dash';
   if(p.includes('new-cluster'))id='nav-new';

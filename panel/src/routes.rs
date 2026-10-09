@@ -302,24 +302,30 @@ async fn preflight(State(s): State<AppState>, Path(id): Path<String>) -> impl In
     );
 
     // 2. Template cloud-init ADA di node target? (penyebab gagal apply paling konyol)
+    // Cari di semua node agar target_node yang salah tidak menyesatkan.
     if api_ok {
-        match proxmox::list_vms(&creds, &cluster.target_node).await {
-            Ok(all) => {
-                let found = all.iter().any(|v| v.template && v.name == cluster.clone_template);
-                check(
-                    "template",
-                    found,
-                    if found {
-                        format!("{} ada di node {}", cluster.clone_template, cluster.target_node)
-                    } else {
-                        format!(
-                            "TIDAK ADA: '{}' tidak ditemukan di node {}. Buat template dulu.",
-                            cluster.clone_template, cluster.target_node
-                        )
-                    },
-                );
+        match fetch_vms_any(&s, None).await {
+            Some((all, found_node, ok_nodes)) => {
+                match all.iter().find(|v| v.template && v.name == cluster.clone_template) {
+                    Some(_) => check(
+                        "template",
+                        true,
+                        format!("{} ada (node {}, dicari di {:?})", cluster.clone_template, found_node, ok_nodes),
+                    ),
+                    None => {
+                        let sample: Vec<String> = all.iter().take(8).map(|v| format!("{}(template={})", v.name, v.template)).collect();
+                        check(
+                            "template",
+                            false,
+                            format!(
+                                "TIDAK ADA: '{}' tidak ditemukan (dicari di {:?}, {} VM terlihat: {}). Buat template dulu di Proxmox (Convert to template) atau betulkan nama template.",
+                                cluster.clone_template, ok_nodes, all.len(), sample.join(", ")
+                            ),
+                        );
+                    }
+                }
             }
-            Err(e) => check("template", false, format!("gagal list VM: {e}")),
+            None => check("template", false, "gagal list VM di semua node".to_string()),
         }
     } else {
         check("template", false, "skip (API gagal)".to_string());
@@ -386,32 +392,187 @@ struct NodesQuery {
 }
 
 async fn list_nodes(State(s): State<AppState>, Query(q): Query<NodesQuery>) -> Json<Value> {
-    // Try live Proxmox if a cluster with token exists.
-    let creds = q
-        .cluster_id
-        .as_deref()
-        .and_then(|id| s.creds_of(id))
-        .or_else(|| s.first_creds());
+    // Setup dulu (sumber utama alur Clone VM), lalu cluster — sebelumnya
+    // Setup tidak pernah dicoba sehingga tanpa cluster selalu mock "pve".
+    let mut candidates: Vec<ProxmoxCreds> = vec![];
+    if let Some(c) = q.cluster_id.as_deref().and_then(|id| s.creds_of(id)) {
+        candidates.push(c);
+    }
+    if let Some(c) = setup_creds(&s.db) {
+        candidates.push(c);
+    }
+    if let Some(c) = s.first_creds() {
+        candidates.push(c);
+    }
 
-    if let Some(c) = creds {
+    for c in candidates {
         if !c.token_secret.is_empty() {
             if let Ok(nodes) = proxmox::list_nodes(&c).await {
-                return Json(json!(nodes));
+                if !nodes.is_empty() {
+                    return Json(json!(nodes));
+                }
             }
         }
     }
     Json(json!(proxmox::mock_nodes()))
 }
 
+/// Kredensial kandidat berurutan: Setup dulu, lalu semua cluster.
+/// Dipakai pencarian VM/template agar hasil test di Health langsung
+/// kepakai tanpa harus buat cluster dulu.
+fn candidate_creds(s: &AppState) -> Vec<ProxmoxCreds> {
+    let mut out: Vec<ProxmoxCreds> = vec![];
+    if let Some(c) = setup_creds(&s.db) {
+        out.push(c);
+    }
+    for cl in s.db.list_clusters() {
+        if !cl.token_secret.trim().is_empty() {
+            out.push(cl.into_creds());
+        }
+    }
+    out
+}
+
+/// Coba list VM ke SEMUA node dan gabungkan hasilnya.
+/// Urutan node per kredensial: override -> setup_node/cluster node -> semua live nodes.
+/// Mengembalikan (semua vms gabungan, node primer, daftar node yang sukses).
+/// Agregasi ini yang memperbaiki "template tidak ketemu padahal node sudah
+/// benar" — template bisa ada di node lain dari node primer.
+async fn fetch_vms_any(
+    s: &AppState,
+    node_override: Option<String>,
+) -> Option<(Vec<crate::proxmox::VmInfo>, String, Vec<String>)> {
+    let creds_list = candidate_creds(s);
+    if creds_list.is_empty() {
+        return None;
+    }
+    // Kumpulkan cluster target_nodes untuk dicoba juga.
+    let cluster_nodes: Vec<String> = s
+        .db
+        .list_clusters()
+        .into_iter()
+        .map(|c| c.target_node)
+        .filter(|n| !n.trim().is_empty())
+        .collect();
+
+    for c in &creds_list {
+        // Jalur utama: /cluster/resources?type=vm (se-cluster, tanpa tebak node).
+        if node_override.as_deref().map(|o| o.trim().is_empty()).unwrap_or(true) {
+            if let Ok(cluster_all) = proxmox::list_vms_cluster(c).await {
+                let mut merged: Vec<crate::proxmox::VmInfo> = vec![];
+                let mut ok_nodes: Vec<String> = vec![];
+                for (v, node) in cluster_all {
+                    if !ok_nodes.contains(&node) {
+                        ok_nodes.push(node);
+                    }
+                    if !merged.iter().any(|m: &crate::proxmox::VmInfo| m.vmid == v.vmid) {
+                        merged.push(v);
+                    }
+                }
+                // Cluster-resources sukses (walau 0) = jawaban resmi API.
+                // Kembalikan langsung agar tidak tertutup hasil per-node yang usang.
+                ok_nodes.sort();
+                merged.sort_by(|a, b| a.name.cmp(&b.name));
+                let primary = ok_nodes.first().cloned().unwrap_or_else(|| setup_node(&s.db));
+                return Some((merged, primary, ok_nodes));
+            }
+        }
+        let mut try_nodes: Vec<String> = vec![];
+        if let Some(o) = node_override.clone() {
+            if !o.trim().is_empty() {
+                try_nodes.push(o.trim().to_string());
+            }
+        }
+        let setup_n = setup_node(&s.db);
+        if !try_nodes.contains(&setup_n) {
+            try_nodes.push(setup_n);
+        }
+        for n in &cluster_nodes {
+            if !try_nodes.contains(n) {
+                try_nodes.push(n.clone());
+            }
+        }
+        // Node live dari API (nama asli server) — kunci perbaikan nama salah.
+        if let Ok(live_nodes) = proxmox::list_nodes(c).await {
+            for n in live_nodes {
+                if !try_nodes.contains(&n.name) {
+                    try_nodes.push(n.name);
+                }
+            }
+        }
+        let mut merged: Vec<crate::proxmox::VmInfo> = vec![];
+        let mut ok_nodes: Vec<String> = vec![];
+        for node in try_nodes {
+            if let Ok(vms) = proxmox::list_vms(c, &node).await {
+                ok_nodes.push(node.clone());
+                for v in vms {
+                    if !merged.iter().any(|m: &crate::proxmox::VmInfo| m.vmid == v.vmid) {
+                        merged.push(v);
+                    }
+                }
+            }
+        }
+        if !ok_nodes.is_empty() {
+            merged.sort_by(|a, b| a.name.cmp(&b.name));
+            let primary = ok_nodes[0].clone();
+            return Some((merged, primary, ok_nodes));
+        }
+    }
+    None
+}
+
+/// Cari template berdasarkan nama di SEMUA node (bukan cuma setup_node).
+/// Mengembalikan (vmid template, node asalnya).
+async fn resolve_template_any(s: &AppState, template_name: &str) -> Option<(u64, String)> {
+    let creds_list = candidate_creds(s);
+    // 1. Jalur cepat: cluster-resources (se-cluster sekaligus).
+    for c in &creds_list {
+        if let Ok(all) = proxmox::list_vms_cluster(c).await {
+            if let Some((v, node)) = all.iter().find(|(v, _)| v.template && v.name == template_name) {
+                return Some((v.vmid, node.clone()));
+            }
+        }
+    }
+    // 2. Fallback per-node (untuk server lama tanpa /cluster/resources).
+    // Kumpulkan kandidat node sama seperti fetch_vms_any.
+    let mut try_nodes: Vec<String> = vec![];
+    let setup_n = setup_node(&s.db);
+    try_nodes.push(setup_n);
+    for cl in s.db.list_clusters() {
+        if !cl.target_node.trim().is_empty() && !try_nodes.contains(&cl.target_node) {
+            try_nodes.push(cl.target_node);
+        }
+    }
+    for c in &creds_list {
+        if let Ok(live_nodes) = proxmox::list_nodes(c).await {
+            for n in live_nodes {
+                if !try_nodes.contains(&n.name) {
+                    try_nodes.push(n.name);
+                }
+            }
+        }
+    }
+    for c in &creds_list {
+        for node in &try_nodes {
+            if let Ok(all) = proxmox::list_vms(c, node).await {
+                if let Some(v) = all.iter().find(|v| v.template && v.name == template_name) {
+                    return Some((v.vmid, node.clone()));
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Fallback template statis bila Setup/API belum bisa (dipakai list_templates).
-fn static_templates() -> Value {
-    json!([
-        {"name": "ubuntu-22-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 22.04 LTS Cloud-Init"},
-        {"name": "ubuntu-24-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 24.04 LTS Cloud-Init"},
-        {"name": "debian-12-cloudinit", "storage": "local", "size": "3GB", "description": "Debian 12 Cloud-Init"},
-        {"name": "rocky-9-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 9 Cloud-Init (user: rocky)"},
-        {"name": "rocky-8-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 8 Cloud-Init (user: rocky)"},
-    ])
+fn static_templates() -> Vec<Value> {
+    vec![
+        json!({"name": "ubuntu-22-04-cloudinit", "vmid": null, "storage": "local", "size": "4GB", "description": "Ubuntu 22.04 LTS Cloud-Init"}),
+        json!({"name": "ubuntu-24-04-cloudinit", "vmid": null, "storage": "local", "size": "4GB", "description": "Ubuntu 24.04 LTS Cloud-Init"}),
+        json!({"name": "debian-12-cloudinit", "vmid": null, "storage": "local", "size": "3GB", "description": "Debian 12 Cloud-Init"}),
+        json!({"name": "rocky-9-cloudinit", "vmid": null, "storage": "local", "size": "4GB", "description": "Rocky Linux 9 Cloud-Init (user: rocky)"}),
+        json!({"name": "rocky-8-cloudinit", "vmid": null, "storage": "local", "size": "4GB", "description": "Rocky Linux 8 Cloud-Init (user: rocky)"}),
+    ]
 }
 
 async fn get_config() -> Json<Value> {
@@ -1975,57 +2136,62 @@ fn valid_ipv4(s: &str) -> bool {
     p.len() == 4 && p.iter().all(|x| x.parse::<u8>().is_ok() && !x.is_empty())
 }
 
-/// GET /api/vms — semua VM QEMU di node Setup (?node= override).
-/// Coba Setup creds dulu, fallback ke kredensial cluster pertama.
+/// GET /api/vms — semua VM QEMU (?node= override).
+/// Mencoba Setup lalu cluster, dan tiap kredensial mencoba beberapa node
+/// (override -> setup/cluster node -> live nodes) agar nama node yang salah
+/// tidak membuat daftar VM kosong.
 async fn list_all_vms(State(s): State<AppState>, Query(q): Query<NodesQuery>) -> impl IntoResponse {
-    let creds = setup_creds(&s.db)
-        .or_else(|| s.first_creds());
-    if creds.is_none() {
-        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    if candidate_creds(&s).is_empty() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu (simpan koneksi di Health) atau buat cluster dengan token API (koneksi belum tersimpan)");
     }
-    let creds = creds.unwrap();
-    let node = q.node.unwrap_or_else(|| setup_node(&s.db));
-    match proxmox::list_vms(&creds, &node).await {
-        Ok(vms) => {
+    match fetch_vms_any(&s, q.node).await {
+        Some((vms, node, ok_nodes)) => {
             let templates: Vec<Value> = vms.iter().filter(|v| v.template).cloned().map(|v| json!({"name": v.name, "vmid": v.vmid})).collect();
-            (StatusCode::OK, Json(json!({"ok": true, "node": node, "vms": vms, "templates": templates}))).into_response()
+            (StatusCode::OK, Json(json!({"ok": true, "node": node, "nodes": ok_nodes, "vms": vms, "templates": templates}))).into_response()
         }
-        Err(e) => err_msg(StatusCode::BAD_GATEWAY, e),
+        None => err_msg(StatusCode::BAD_GATEWAY, "Proxmox terhubung tapi list VM gagal di semua node — cek token/node/Jaringan"),
     }
 }
 
 /// GET /api/templates — template LIVE dari Proxmox; fallback daftar statis
-/// bila Setup/API belum bisa. Coba kredensial Setup dulu, lalu cluster aktif.
+/// bila Setup/API belum bisa.
+/// Bentuk respon SELALU objek: {templates, live, node, source}
+/// (`live=false` + `source=fallback` = 5 template statis, bukan dari Proxmox).
 async fn list_templates(State(s): State<AppState>) -> Json<Value> {
-    // 1. Setup creds (sumber utama baru).
-    if let Some(creds) = setup_creds(&s.db) {
-        let node = setup_node(&s.db);
-        if let Ok(all) = proxmox::list_vms(&creds, &node).await {
-            let live: Vec<Value> = all
-                .into_iter()
-                .filter(|v| v.template)
-                .map(|v| json!({"name": v.name, "vmid": v.vmid, "description": format!("template ID {}", v.vmid)}))
-                .collect();
-            if !live.is_empty() {
-                return Json(json!(live));
-            }
+    if let Some((all, node, ok_nodes)) = fetch_vms_any(&s, None).await {
+        let live: Vec<Value> = all
+            .iter()
+            .filter(|v| v.template)
+            .map(|v| json!({"name": v.name, "vmid": v.vmid, "description": format!("live di node {} (vmid {})", node, v.vmid)}))
+            .collect();
+        if !live.is_empty() {
+            return Json(json!({"templates": live, "live": true, "node": node, "nodes": ok_nodes, "source": "live"}));
         }
+        // Terhubung tapi tidak ada template — sertakan diagnosa agar jelas.
+        let sample: Vec<String> = all.iter().take(10).map(|v| format!("{} (vmid {}, template={})", v.name, v.vmid, v.template)).collect();
+        let diag = if all.is_empty() {
+            format!("API mengembalikan 0 VM dari nodes {:?} (node primer {}). Artinya token nyambung tapi tidak melihat VM apa pun. Penyebab umum: (1) token dibuat dengan Privilege Separation ON / role terbatas — buat ulang token TANPA centang Privilege Separation atau beri role PVEAuditor+VM.Audit di / (Datacenter → Permissions); (2) VM/template memang belum ada di cluster ini — cek di Proxmox UI atau Shell `qm list`; (3) template berupa LXC/ISO, bukan QEMU template.", ok_nodes, node)
+        } else {
+            format!("Terhubung ke node {} tapi tidak ada template di sana (cek {} VM, semua flag template=false). Kemungkinan: (1) belum ada template di Proxmox — buat dari VM via Proxmox UI (klik VM > More > Convert to template); (2) template ada di node lain — cek nodes {:?}; (3) token tanpa hak baca template.", node, all.len(), ok_nodes)
+        };
+        return Json(json!({
+            "templates": [],
+            "live": true,
+            "node": node,
+            "nodes": ok_nodes,
+            "source": "live-empty",
+            "total_vms": all.len(),
+            "sample": sample,
+            "warning": diag,
+        }));
     }
-    // 2. Coba dari cluster yang punya token.
-    if let Some(creds) = s.first_creds() {
-        let node = setup_node(&s.db);
-        if let Ok(all) = proxmox::list_vms(&creds, &node).await {
-            let live: Vec<Value> = all
-                .into_iter()
-                .filter(|v| v.template)
-                .map(|v| json!({"name": v.name, "vmid": v.vmid, "description": format!("template ID {}", v.vmid)}))
-                .collect();
-            if !live.is_empty() {
-                return Json(json!(live));
-            }
-        }
-    }
-    Json(static_templates())
+    Json(json!({
+        "templates": static_templates(),
+        "live": false,
+        "node": setup_node(&s.db),
+        "source": "fallback",
+        "warning": "Proxmox belum terhubung — 5 template di bawah ini daftar statis (bukan live dari node). Isi Setup / Test API di Health agar daftar live muncul.",
+    }))
 }
 
 /// POST /api/vms/clone — clone template -> VM isi data (cloud-init) -> start -> IP.
@@ -2037,7 +2203,6 @@ async fn clone_vm(State(s): State<AppState>, Json(b): Json<crate::models::CloneB
         return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
     }
     let creds = creds.unwrap();
-    let node = setup_node(&s.db);
     let name = b.name.trim().to_string();
     if !valid_vm_name(&name) {
         return err_msg(
@@ -2045,20 +2210,18 @@ async fn clone_vm(State(s): State<AppState>, Json(b): Json<crate::models::CloneB
             "nama VM invalid (huruf/angka/strip, maks 63, tidak boleh diawali/diakhiri strip)",
         );
     }
-    // 1. Resolve template (harus template beneran, bukan VM biasa).
-    let all = match proxmox::list_vms(&creds, &node).await {
-        Ok(v) => v,
-        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
-    };
-    let tpl = match all.iter().find(|v| v.template && v.name == b.template.trim()) {
-        Some(v) => v.vmid,
+    // 1. Resolve template di SEMUA node (bukan cuma setup_node).
+    let (tpl, node) = match resolve_template_any(&s, b.template.trim()).await {
+        Some(x) => x,
         None => {
             return err_msg(
                 StatusCode::BAD_REQUEST,
-                format!("template '{}' tidak ditemukan di node {} (harus template, bukan VM biasa)", b.template.trim(), node),
+                format!("template '{}' tidak ditemukan di node mana pun (harus template, bukan VM biasa). Cek daftar template live di atas / buat template dulu di Proxmox", b.template.trim()),
             )
         }
     };
+    // Daftar VM di node template (untuk cek vmid bentrok).
+    let all = proxmox::list_vms(&creds, &node).await.unwrap_or_default();
     // 2. VMID: sesuai permintaan, atau nextid otomatis.
     let vmid = match b.vmid {
         Some(v) => {

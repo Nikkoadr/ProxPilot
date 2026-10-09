@@ -16,6 +16,8 @@
 <li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
 <li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
 <li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
+<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
+<li class="nav-item" id="nav-settings"><a class="nav-link" href="/settings.html"><i class="fas fa-cog"></i><span>Settings</span></a></li>
 <hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
 </ul>
 <div id="content-wrapper" class="d-flex flex-column"><div id="content">
@@ -49,8 +51,9 @@
 <form id="cloneForm">
 <div class="form-row">
 <div class="form-group col-md-4">
-<label>Template <span class="text-danger">*</span></label>
+<label>Template <span class="text-danger">*</span> <span id="tplLiveBadge"></span></label>
 <select id="cTemplate" class="form-control" required><option value="">loading...</option></select>
+<small id="tplWarn" class="form-text text-muted"></small>
 </div>
 <div class="form-group col-md-4">
 <label>VM Name <span class="text-danger">*</span></label>
@@ -142,8 +145,8 @@
 <div class="card-body">
 <div class="table-responsive">
 <table class="table table-bordered table-hover">
-<thead><tr><th>VMID</th><th>Nama</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Aksi</th></tr></thead>
-<tbody id="vmRows"><tr><td colspan="7" class="text-center text-muted">loading...</td></tr></tbody>
+<thead><tr><th>VMID</th><th>Nama</th><th>Status</th><th>CPU / Memory</th><th>Uptime</th><th>Aksi</th></tr></thead>
+<tbody id="vmRows"><tr><td colspan="6" class="text-center text-muted">loading...</td></tr></tbody>
 </table>
 </div>
 </div>

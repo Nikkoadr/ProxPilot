@@ -223,10 +223,83 @@ pub async fn list_vms(c: &ProxmoxCreds, node: &str) -> Result<Vec<VmInfo>, Strin
         .await
         .map_err(|e| e.to_string())?;
     if !r.status().is_success() {
-        return Err(format!("HTTP {}", r.status()));
+        let code = r.status();
+        let body = r.text().await.unwrap_or_default();
+        return Err(format!("HTTP {code}: {}", body.chars().take(200).collect::<String>()));
     }
     let v: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
     Ok(parse_vm_list(&v))
+}
+
+/// GET /cluster/resources?type=vm — SEMUA VM/template se-cluster sekaligus.
+/// Lebih andal dari per-node /qemu: tidak butuh tebak nama node, dan
+/// tetap jalan walau token hanya punya hak cluster-wide.
+/// Mengembalikan (VmInfo, nama node).
+pub async fn list_vms_cluster(c: &ProxmoxCreds) -> Result<Vec<(VmInfo, String)>, String> {
+    let cli = client(c.verify_tls);
+    let url = api_url(&c.base_url, "/cluster/resources");
+    let auth = format!("PVEAPIToken={}!{}={}", c.user, c.token_id, c.token_secret);
+    let r = cli
+        .get(&url)
+        .header("Authorization", auth)
+        .query(&[("type", "vm")])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        let code = r.status();
+        let body = r.text().await.unwrap_or_default();
+        return Err(format!("HTTP {code}: {}", body.chars().take(200).collect::<String>()));
+    }
+    let v: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
+    Ok(parse_cluster_resources(&v))
+}
+
+fn parse_u64_flex(v: Option<&serde_json::Value>) -> u64 {
+    match v {
+        Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(0),
+        Some(serde_json::Value::String(s)) => s.parse::<u64>().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+fn parse_cluster_resources(v: &serde_json::Value) -> Vec<(VmInfo, String)> {
+    let mut out = vec![];
+    if let Some(arr) = v.pointer("/data").and_then(|x| x.as_array()) {
+        for n in arr {
+            // Hanya entri VM (qemu/lxc); abaikan storage/node/pool.
+            let typ = n.get("type").and_then(|x| x.as_str()).unwrap_or("");
+            if typ != "qemu" && typ != "lxc" {
+                continue;
+            }
+            let node = n.get("node").and_then(|x| x.as_str()).unwrap_or("?").to_string();
+            out.push((
+                VmInfo {
+                    vmid: parse_u64_flex(n.get("vmid")),
+                    name: n.get("name").and_then(|x| x.as_str()).unwrap_or("?").to_string(),
+                    status: n.get("status").and_then(|x| x.as_str()).unwrap_or("unknown").to_string(),
+                    cpus: parse_u64_flex(n.get("maxcpu").or_else(|| n.get("cpus"))) as u32,
+                    cpu: n.get("cpu").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                    mem: parse_u64_flex(n.get("mem")),
+                    maxmem: parse_u64_flex(n.get("maxmem")),
+                    uptime: parse_u64_flex(n.get("uptime")),
+                    template: parse_template_flag(n),
+                },
+                node,
+            ));
+        }
+    }
+    out.sort_by(|a, b| a.0.name.cmp(&b.0.name));
+    out
+}
+
+fn parse_template_flag(n: &serde_json::Value) -> bool {
+    match n.get("template") {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Number(num)) => num.as_u64().unwrap_or(0) == 1,
+        Some(serde_json::Value::String(s)) => s == "1" || s.eq_ignore_ascii_case("true"),
+        _ => false,
+    }
 }
 
 fn parse_vm_list(v: &serde_json::Value) -> Vec<VmInfo> {
@@ -242,7 +315,7 @@ fn parse_vm_list(v: &serde_json::Value) -> Vec<VmInfo> {
                 mem: n.get("mem").and_then(|x| x.as_u64()).unwrap_or(0),
                 maxmem: n.get("maxmem").and_then(|x| x.as_u64()).unwrap_or(0),
                 uptime: n.get("uptime").and_then(|x| x.as_u64()).unwrap_or(0),
-                template: n.get("template").and_then(|x| x.as_u64()).unwrap_or(0) == 1,
+                template: parse_template_flag(n),
             });
         }
     }
@@ -501,6 +574,20 @@ mod tests {
     }
 
     #[test]
+    fn template_flag_handles_bool_and_string() {
+        for (raw, expect) in [
+            (r#"{"data":[{"vmid":1,"name":"a","template":true}]}"#, true),
+            (r#"{"data":[{"vmid":1,"name":"a","template":false}]}"#, false),
+            (r#"{"data":[{"vmid":1,"name":"a","template":1}]}"#, true),
+            (r#"{"data":[{"vmid":1,"name":"a","template":0}]}"#, false),
+            (r#"{"data":[{"vmid":1,"name":"a"}]}"#, false),
+        ] {
+            let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert_eq!(parse_vm_list(&v)[0].template, expect, "raw={raw}");
+        }
+    }
+
+    #[test]
     fn agent_ip_picks_first_routable_ipv4() {
         let v: serde_json::Value = serde_json::from_str(
             r#"{"data":{"result":[
@@ -512,6 +599,23 @@ mod tests {
         assert_eq!(parse_agent_ip(&v).as_deref(), Some("192.168.1.50"));
         let empty: serde_json::Value = serde_json::from_str(r#"{"data":{"result":[]}}"#).unwrap();
         assert!(parse_agent_ip(&empty).is_none());
+    }
+
+    #[test]
+    fn cluster_resources_parses_qemu_only() {
+        let v: serde_json::Value = serde_json::from_str(
+            r#"{"data":[
+                {"type":"qemu","vmid":9000,"name":"rocky-9-cloudinit","node":"pve001","status":"stopped","template":1,"maxcpu":2,"mem":0,"maxmem":4294967296,"uptime":0},
+                {"type":"qemu","vmid":101,"name":"app-1","node":"pve001","status":"running","template":0,"maxcpu":4,"uptime":60},
+                {"type":"storage","storage":"local","node":"pve001"},
+                {"type":"node","node":"pve001"}
+            ]}"#,
+        )
+        .unwrap();
+        let list = parse_cluster_resources(&v);
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|(vm, node)| vm.template && vm.vmid == 9000 && node == "pve001"));
+        assert!(list.iter().any(|(vm, _)| !vm.template && vm.name == "app-1"));
     }
 
     #[test]

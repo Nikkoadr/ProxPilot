@@ -27,18 +27,30 @@ Alur panel: **Health** (SSH key + test koneksi) → **New Cluster** (VM/Terrafor
 Kelola: **Plan** (preview tanpa apply), **Destroy** (hapus VM, definisi tetap),
 VM live + power (start/reboot/shutdown/stop), guard anti deploy-ganda.
 
-## Cara 2 — manual (tanpa panel)
+## Cara 2 — manual (tanpa panel, pola Thomas-Krenn, provider bpg)
+
+> Catatan: provider lama `telmate/proxmox` menuntut hak `VM.Monitor` yang
+> tidak ada lagi di Proxmox 9, jadi repo ini pakai `bpg/proxmox`.
 
 ```bash
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-# isi kredensial Proxmox, lalu:
-cd terraform && terraform init && terraform apply
+cd terraform
+cp credentials.auto.tfvars.example credentials.auto.tfvars
+# isi endpoint + api_token (format user@realm!tokenid=secret),
+# sesuaikan variables.tf (target_node, template_vmid) bila perlu, lalu:
+terraform init
+terraform plan     # cek: 1 VM srv-demo-1, tanpa error template/node
+terraform apply    # ketik yes
 
 ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-common.yml
 ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-master.yml
 ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-workers.yml
 ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-nginx.yml
 ```
+
+Struktur `terraform/`: `provider.tf` (token auth) + `variables.tf`
+(default `target_node = pve001`, `template_vmid = 9001`) + `srv-demo-1.tf`
+(1 file per VM, duplikat untuk tambah VM). Secret di
+`credentials.auto.tfvars` (gitignored).
 
 ## VM default (bisa diubah semua dari panel)
 
