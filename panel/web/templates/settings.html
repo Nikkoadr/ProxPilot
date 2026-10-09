@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProxPilot — Settings</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="page">
+<aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+  <div class="container-fluid">
+    <a href="/" class="navbar-brand"><strong>ProxPilot</strong></a>
+    <div class="collapse navbar-collapse" id="sidebar-menu">
+      <ul class="navbar-nav">
+        <li class="nav-item"><a class="nav-link" href="/setup"><span class="nav-link-icon"><i class="ti ti-plug"></i></span>Setup</a></li>
+        {{if .SetupComplete}}
+        <li class="nav-item"><a class="nav-link" href="/clone"><span class="nav-link-icon"><i class="ti ti-copy"></i></span>Clone VM</a></li>
+        <li class="nav-item"><a class="nav-link" href="/configure"><span class="nav-link-icon"><i class="ti ti-settings"></i></span>Configure</a></li>
+        {{end}}
+        <li class="nav-item"><a class="nav-link active" href="/settings"><span class="nav-link-icon"><i class="ti ti-user-cog"></i></span>Settings</a></li>
+      </ul>
+    </div>
+  </div>
+</aside>
+<div class="page-wrapper">
+  <header class="navbar navbar-expand-md d-print-none">
+    <div class="container-xl">
+      <h1 class="navbar-brand">Settings</h1>
+      <div class="navbar-nav ms-auto">
+        <span class="nav-link text-muted">{{.User}}</span>
+        <a href="#" id="btnLogout" class="nav-link"><i class="ti ti-logout"></i> Logout</a>
+      </div>
+    </div>
+  </header>
+  <div class="page-body"><div class="container-xl">
+    <div class="card"><div class="card-header"><h3 class="card-title">Ganti Password</h3></div>
+    <div class="card-body col-md-6">
+      <div class="mb-2"><label class="form-label">Password lama</label><input id="oldpw" type="password" class="form-control"></div>
+      <div class="mb-2"><label class="form-label">Password baru (min 6)</label><input id="newpw" type="password" class="form-control"></div>
+      <div id="msg" class="mb-2"></div>
+      <button id="btnPw" class="btn btn-primary btn-sm">Ganti</button>
+    </div></div>
+  </div></div>
+</div>
+</div>
+<script src="/static/app.js"></script>
+<script>
+document.getElementById('btnPw').onclick = async () => {
+  const msg = document.getElementById('msg'); msg.textContent = ''; msg.className = 'mb-2';
+  try {
+    const r = await apiPost('/api/user/password', {old_password: val('oldpw'), new_password: val('newpw')});
+    msg.textContent = r.message || 'OK, login ulang...'; msg.className = 'mb-2 text-success';
+    setTimeout(() => location.href = '/login', 1200);
+  } catch(e) { msg.textContent = e.message; msg.className = 'mb-2 text-danger'; }
+};
+</script>
+</body>
+</html>

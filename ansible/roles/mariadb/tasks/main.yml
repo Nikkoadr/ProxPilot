@@ -1,0 +1,47 @@
+---
+# MariaDB dengan tuning otomatis dari fakta CPU/RAM host.
+# buffer_pool = 50% RAM, log_file = 25% pool, dsb (lihat templates/tuning.cnf.j2).
+- name: Install MariaDB (Debian)
+  apt:
+    name: mariadb-server
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install MariaDB (RedHat)
+  dnf:
+    name: mariadb-server
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Deploy tuning config (Debian)
+  template:
+    src: tuning.cnf.j2
+    dest: /etc/mysql/mariadb.conf.d/99-proxpilot-tuning.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart mariadb
+  when: ansible_os_family == "Debian"
+
+- name: Deploy tuning config (RedHat)
+  template:
+    src: tuning.cnf.j2
+    dest: /etc/my.cnf.d/proxpilot-tuning.cnf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart mariadb
+  when: ansible_os_family == "RedHat"
+
+- name: Start and enable MariaDB
+  service:
+    name: mariadb
+    state: started
+    enabled: yes
+
+- name: Verify MariaDB ping
+  command: mysqladmin ping
+  register: mariadb_ping
+  changed_when: false
+  failed_when: "'alive' not in mariadb_ping.stdout"

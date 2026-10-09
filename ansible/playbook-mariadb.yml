@@ -1,0 +1,9 @@
+---
+- name: MariaDB tuned setup
+  hosts: configured
+  become: yes
+  gather_facts: yes
+
+  roles:
+    - common
+    - mariadb

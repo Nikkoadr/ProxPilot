@@ -1,0 +1,28 @@
+# {{ ansible_managed }} — tuning otomatis ProxPilot.
+# Dihitung dari {{ ansible_processor_vcpus }} vCPU dan {{ ansible_memtotal_mb }} MB RAM.
+{% set ram_mb = ansible_memtotal_mb | int %}
+{% set vcpus = ansible_processor_vcpus | int %}
+{% set pool_mb = [(ram_mb // 2), 128] | max %}
+{% set log_mb = [(pool_mb // 4), 48] | max %}
+{% if pool_mb >= 1024 %}{% set instances = [(pool_mb // 512), 8] | min %}{% else %}{% set instances = 1 %}{% endif %}
+{% if ram_mb < 2048 %}{% set max_conn = 100 %}{% elif ram_mb < 8192 %}{% set max_conn = 200 %}{% else %}{% set max_conn = 500 %}{% endif %}
+
+[mysqld]
+# --- pool & log ({{ pool_mb }}M pool, {{ log_mb }}M log, {{ instances }} instance) ---
+innodb_buffer_pool_size = {{ pool_mb }}M
+innodb_buffer_pool_instances = {{ instances }}
+innodb_log_file_size = {{ log_mb }}M
+innodb_flush_method = O_DIRECT
+innodb_flush_log_at_trx_commit = 1
+innodb_io_capacity = 400
+
+# --- koneksi & cache ---
+max_connections = {{ max_conn }}
+table_open_cache = {{ 4000 if ram_mb >= 4096 else 2000 }}
+thread_cache_size = {{ [vcpus * 4, 64] | min }}
+max_allowed_packet = 64M
+
+# --- umum ---
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+skip-name-resolve

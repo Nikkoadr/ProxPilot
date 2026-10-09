@@ -1,37 +1,15 @@
-# Build output
+# Go build
+/proxpilot
+/bin/
+*.exe
 target/
-target-linux/
-dist/
 
-# Environment
-.env
-.env.local
-
-# Runtime data (SQLite + generated infra)
+# Runtime data (SQLite + runs)
 data/
-infra/terraform/*/
-!infra/terraform/.gitkeep
+!/data/.gitkeep
 
-# IDE
+# IDE / OS
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-logs/
-
-# Terraform state (generated)
-*.tfstate
-*.tfstate.backup
-.terraform/
-
-# Temp
-*.tmp
-*.temp
