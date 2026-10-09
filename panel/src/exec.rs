@@ -5,6 +5,7 @@
 //! Lapisan `wsl ...` dipertahankan sebagai compat bila binary dijalankan dari Windows.
 
 use std::process::Command;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -63,8 +64,103 @@ fn bash_escape(cmd: &str) -> String {
 }
 
 pub fn wsl_available() -> bool {
-    let r = run_cmd("wsl", &["bash", "-lc", "echo wsl-ok"], Duration::from_secs(10));
+    // Env eksplisit selalu menang (tidak pakai cache).
+    if let Some(d) = wsl_distro() {
+        return probe_wsl(Some(&d));
+    }
+    match wsl_target() {
+        WslTarget::Missing => false,
+        WslTarget::Default => probe_wsl(None),
+        WslTarget::Named(n) => probe_wsl(Some(n)),
+    }
+}
+
+/// Target WSL hasil deteksi sekali per proses (distro default bisa salah,
+/// mis. docker-desktop tanpa bash — panel lalu memilih Ubuntu otomatis).
+fn wsl_target() -> &'static WslTarget {
+    static WSL_TARGET: OnceLock<WslTarget> = OnceLock::new();
+    WSL_TARGET.get_or_init(detect_wsl_target)
+}
+
+enum WslTarget {
+    /// Distro default bisa dipakai — tanpa `-d`.
+    Default,
+    /// Pakai distro eksplisit via `-d`.
+    Named(String),
+    /// Tidak ada WSL yang bisa dipakai.
+    Missing,
+}
+
+fn detect_wsl_target() -> WslTarget {
+    // 1. Jalur cepat: distro default.
+    if probe_wsl(None) {
+        return WslTarget::Default;
+    }
+    // 2. Pindai distro terinstal (prefer Ubuntu/Debian), probe satu-satu.
+    for name in candidate_distros() {
+        if probe_wsl(Some(&name)) {
+            tracing::info!("wsl auto-selected distro: {name} (default distro unusable)");
+            return WslTarget::Named(name);
+        }
+    }
+    WslTarget::Missing
+}
+
+fn probe_wsl(distro: Option<&str>) -> bool {
+    let prefix = wsl_prefix_for(distro);
+    let mut args: Vec<&str> = prefix.iter().map(|s| s.as_str()).collect();
+    args.extend(["bash", "-lc", "echo wsl-ok"]);
+    let r = run_cmd("wsl", &args, Duration::from_secs(15));
     r.ok && r.output.contains("wsl-ok")
+}
+
+/// Daftar distro kandidat dari `wsl -l -q` (buang docker-*, BOM, baris kosong;
+/// Ubuntu dulu, lalu Debian).
+fn candidate_distros() -> Vec<String> {
+    let out = run_cmd("wsl", &["-l", "-q"], Duration::from_secs(10));
+    if !out.ok {
+        return vec![];
+    }
+    parse_distro_list(&out.output)
+}
+
+fn parse_distro_list(output: &str) -> Vec<String> {
+    let mut names: Vec<String> = output
+        .lines()
+        .map(|l| l.trim().trim_matches('\u{feff}').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    // Distro khusus docker minimal (sering tanpa bash) — jangan dipilih.
+    names.retain(|n| !n.to_lowercase().starts_with("docker-desktop"));
+    names.sort_by_key(|n| {
+        let l = n.to_lowercase();
+        if l.contains("ubuntu") {
+            0
+        } else if l.contains("debian") {
+            1
+        } else {
+            2
+        }
+    });
+    names
+}
+
+/// Distro WSL eksplisit via env PANEL_WSL_DISTRO (mis. "Ubuntu").
+/// Perlu bila distro DEFAULT bukan Ubuntu — contoh docker-desktop yang
+/// minimal tanpa bash. Tanpa ini, semua `wsl bash ...` jatuh ke distro
+/// yang salah dan tools terbaca hilang.
+pub fn wsl_distro() -> Option<String> {
+    std::env::var("PANEL_WSL_DISTRO")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// Argumen `wsl -d <distro>` (pure, gampang ditest).
+fn wsl_prefix_for(distro: Option<&str>) -> Vec<String> {
+    match distro {
+        Some(d) if !d.trim().is_empty() => vec!["-d".to_string(), d.trim().to_string()],
+        _ => vec![],
+    }
 }
 
 pub fn wsl_distros() -> String {
@@ -73,8 +169,21 @@ pub fn wsl_distros() -> String {
 }
 
 pub fn run_in_wsl(bash_cmd: &str) -> CmdResult {
-    let wrapped = bash_cmd.to_string();
-    run_cmd("wsl", &["bash", "-lc", &wrapped], Duration::from_secs(60))
+    let prefix = wsl_prefix();
+    let mut args: Vec<&str> = prefix.iter().map(|s| s.as_str()).collect();
+    args.extend(["bash", "-lc", bash_cmd]);
+    run_cmd("wsl", &args, Duration::from_secs(60))
+}
+
+/// Prefix `-d <distro>`: dari env eksplisit, else hasil auto-deteksi.
+fn wsl_prefix() -> Vec<String> {
+    if let Some(d) = wsl_distro() {
+        return wsl_prefix_for(Some(&d));
+    }
+    match wsl_target() {
+        WslTarget::Named(n) => wsl_prefix_for(Some(n)),
+        _ => vec![],
+    }
 }
 
 pub fn tool_version_local(tool: &str) -> CmdResult {
@@ -550,4 +659,27 @@ pub fn tools_summary() -> serde_json::Value {
 
 fn first_line(s: &str) -> String {
     s.lines().next().unwrap_or("").chars().take(160).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wsl_prefix_empty_by_default() {
+        assert!(wsl_prefix_for(None).is_empty());
+        assert!(wsl_prefix_for(Some("  ")).is_empty());
+        assert_eq!(
+            wsl_prefix_for(Some("Ubuntu")),
+            vec!["-d".to_string(), "Ubuntu".to_string()]
+        );
+    }
+
+    #[test]
+    fn distro_list_prefers_ubuntu_skips_docker() {
+        let v = parse_distro_list("\u{feff}docker-desktop\r\ndocker-desktop-data\r\nUbuntu\r\nDebian\r\n");
+        assert_eq!(v, vec!["Ubuntu".to_string(), "Debian".to_string()]);
+        assert!(parse_distro_list("").is_empty());
+        assert!(parse_distro_list("docker-desktop-data").is_empty());
+    }
 }

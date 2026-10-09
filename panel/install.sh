@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Proxmox Panel — one-line installer (Ubuntu / Debian / WSL).
+# ProxPilot Panel — one-line installer (Ubuntu / Debian / WSL / Rocky / RHEL).
 #
 #   curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ProxPilot/master/panel/install.sh | bash
 #
@@ -29,6 +29,41 @@ fi
 SUDO=""
 if [[ "$(id -u)" -ne 0 ]]; then SUDO="sudo"; fi
 
+echo "==> [0/6] platform detection (os family + arch, fail fast)..."
+if [[ ! -f "${OS_RELEASE_FILE:-/etc/os-release}" ]]; then
+  echo "ERROR: ${OS_RELEASE_FILE:-/etc/os-release} tidak ditemukan — OS tidak dikenali." >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+source "${OS_RELEASE_FILE:-/etc/os-release}"
+OS_ID="${ID:-unknown}"
+OS_VER="${VERSION_ID:-}"
+ARCH="$(uname -m)"
+echo "      os: $OS_ID $OS_VER / arch: $ARCH"
+case "$OS_ID" in
+  ubuntu|debian)
+    FAMILY="debian" ;;
+  rocky|almalinux|rhel|ol)
+    FAMILY="rhel" ;;
+  fedora)
+    FAMILY="rhel" ;;
+  *)
+    # ID_LIKE fallback untuk turunan (mis. Linux Mint -> ubuntu -> debian).
+    if [[ "${ID_LIKE:-}" == *debian* ]]; then FAMILY="debian";
+    elif [[ "${ID_LIKE:-}" == *rhel* ]] || [[ "${ID_LIKE:-}" == *fedora* ]]; then FAMILY="rhel";
+    else
+      echo "ERROR: OS '$OS_ID' belum didukung. Didukung: Ubuntu/Debian (apt) dan Rocky/RHEL/AlmaLinux (dnf)." >&2
+      exit 1
+    fi ;;
+esac
+FORCE_SOURCE=0
+if [[ "$ARCH" != "x86_64" && "$ARCH" != "amd64" ]]; then
+  echo "      NOTE: arch $ARCH tidak punya release asset (hanya x86_64) — build dari source."
+  FORCE_SOURCE=1
+fi
+if [[ "$FAMILY" == "debian" ]]; then PKG="apt"; else PKG="dnf"; fi
+echo "      family: $FAMILY (pkg: $PKG)"
+
 # Migrasi sekali saja dari nama lama (proxmox-panel): hentikan service lama,
 # pindahkan data (DB + cluster tidak hilang), hapus binary lama.
 OLD_BIN="/usr/local/bin/proxmox-panel"
@@ -50,8 +85,14 @@ if [[ -f "$OLD_BIN" || -d "$OLD_DATA" ]]; then
 fi
 
 echo "==> [1/6] system deps (openssh, ansible, sqlite3, build tools)..."
-$SUDO apt-get update -qq
-$SUDO apt-get install -y -qq openssh-client sshpass curl ca-certificates gpg sqlite3 ansible lsb-release build-essential pkg-config git > /dev/null
+if [[ "$FAMILY" == "debian" ]]; then
+  $SUDO apt-get update -qq
+  $SUDO apt-get install -y -qq openssh-client sshpass curl ca-certificates gpg sqlite3 ansible lsb-release build-essential pkg-config git > /dev/null
+else
+  # RHEL family: ansible + sshpass ada di EPEL.
+  $SUDO dnf install -y -q epel-release > /dev/null
+  $SUDO dnf install -y -q openssh-clients sshpass curl ca-certificates sqlite ansible git gcc make pkgconf > /dev/null
+fi
 echo "      ansible: $(ansible --version 2>/dev/null | head -1 || echo MISSING)"
 
 echo "==> [1b/6] rust toolchain (cargo)..."
@@ -63,13 +104,34 @@ echo "      cargo: $(cargo --version 2>/dev/null || echo MISSING)"
 
 echo "==> [2/6] terraform (HashiCorp repo)..."
 if ! command -v terraform >/dev/null 2>&1; then
-  wget -qO- https://apt.releases.hashicorp.com/gpg | $SUDO gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
-  echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
-    | $SUDO tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
-  $SUDO apt-get update -qq
-  $SUDO apt-get install -y -qq terraform > /dev/null
+  if [[ "$FAMILY" == "debian" ]]; then
+    wget -qO- https://apt.releases.hashicorp.com/gpg | $SUDO gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg
+    echo "deb [signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" \
+      | $SUDO tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq terraform > /dev/null
+  else
+    $SUDO tee /etc/yum.repos.d/hashicorp.repo > /dev/null <<'HASHIEOF'
+[hashicorp]
+name=HashiCorp Stable - $basearch
+baseurl=https://rpm.releases.hashicorp.com/RHEL/$releasever/$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://rpm.releases.hashicorp.com/gpg
+HASHIEOF
+    $SUDO dnf install -y -q terraform > /dev/null
+  fi
 fi
 echo "      terraform: $(terraform version 2>/dev/null | head -1 || echo MISSING)"
+
+echo "==> [2b/6] firewall (hanya bila firewalld aktif, umum di Rocky)..."
+if command -v firewall-cmd >/dev/null 2>&1 && $SUDO firewall-cmd --state 2>/dev/null | grep -qi running; then
+  $SUDO firewall-cmd --permanent --add-port=8080/tcp > /dev/null
+  $SUDO firewall-cmd --reload > /dev/null
+  echo "      firewalld: port 8080/tcp dibuka"
+else
+  echo "      firewalld: tidak aktif / tidak ada — skip"
+fi
 
 echo "==> [3/6] ssh key (~/.ssh/id_ed25519)..."
 if [[ ! -f "$HOME/.ssh/id_ed25519" ]]; then
@@ -93,7 +155,7 @@ else
   TAG="$VERSION"
 fi
 URL="https://github.com/$REPO/releases/download/${TAG:-none}/proxpilot-linux-x86_64"
-if [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxpilot "$URL" 2>/dev/null; then
+if [[ "$FORCE_SOURCE" != "1" ]] && [[ -n "${TAG:-}" ]] && curl -fsSL "${AUTH[@]}" -o /tmp/proxpilot "$URL" 2>/dev/null; then
   $SUDO install -m 0755 /tmp/proxpilot "$BIN"
   rm -f /tmp/proxpilot
   echo "      installed: $BIN ($TAG)"

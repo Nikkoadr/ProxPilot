@@ -8,13 +8,14 @@ storage **SQLite**, login **admin + password (dapat diubah)**.
 
 ---
 
-## Install 1 perintah (WSL / Ubuntu / Debian)
+## Install 1 perintah (WSL / Ubuntu / Debian / Rocky / RHEL)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Nikkoadr/ProxPilot/master/panel/install.sh | bash
 ```
 
-Itu saja — script menginstall **rust +** ansible + terraform + openssh/sqlite3, generate SSH key,
+Itu saja — script mendeteksi OS dulu (`[0/6]`, fail fast kalau tak didukung),
+lalu menginstall **rust +** ansible + terraform + openssh/sqlite3, generate SSH key,
 lalu pasang binary (dari GitHub Release, atau **build dari source otomatis** kalau Release belum ada),
 dan pasang systemd service (restart otomatis).
 
@@ -105,7 +106,9 @@ WSL tanpa systemd: aktifkan systemd (`[boot] systemd=true` di `/etc/wsl.conf`, l
 
 ## Requirements (dipasang otomatis oleh `install.sh`)
 
-- Ubuntu / Debian / WSL + `ansible`, `terraform`, `openssh-client`
+- Ubuntu / Debian / WSL (apt) atau Rocky / RHEL / AlmaLinux (dnf + EPEL otomatis)
+- `ansible`, `terraform`, `openssh-client` (+ `sshpass` untuk tombol Salin key)
+- Rocky: port `8080/tcp` dibuka otomatis bila `firewalld` aktif
 - **Proxmox VE** + API Token: Datacenter → Access → API Tokens (`root@pam!panel`), uncheck *Privilege Separation* kalau mau full.
 
 ## VM template (Ubuntu / Rocky / custom)

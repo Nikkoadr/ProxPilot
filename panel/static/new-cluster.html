@@ -65,6 +65,7 @@
 <div class="form-group col-md-2"><label>Workers</label><input id="worker_count" type="number" class="form-control" value="2" min="0"><small class="form-text text-muted">0 = 1 VM saja</small></div>
 <div class="form-group col-md-2"><label>Worker CPU</label><input id="worker_cpu" type="number" class="form-control" value="2"></div>
 <div class="form-group col-md-2"><label>Worker RAM MB</label><input id="worker_ram" type="number" class="form-control" value="4096"></div>
+<div class="form-group col-md-4"><label>VM name prefix</label><input id="vm_name_prefix" class="form-control" placeholder="otomatis dari nama cluster"><small class="form-text text-muted">mis. web-1 → VM web-1-id-master-0. Kosong = otomatis.</small></div>
 <div class="form-group col-md-12"><label>Isi VM (fitur ansible — menentukan playbook yang dijalankan)</label>
 <div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_k8s" checked><label class="form-check-label" for="feat_k8s">Kubernetes</label></div>
 <div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_nginx" checked><label class="form-check-label" for="feat_nginx">Nginx landing</label></div>

@@ -63,6 +63,11 @@ pub struct Cluster {
     pub verify_tls: bool,
     #[serde(default = "default_features")]
     pub enabled_features: Vec<String>,
+    /// Prefix nama VM custom (opsional). Kosong = otomatis dari nama cluster.
+    /// Disanitasi (huruf/angka/strip) + suffix 8 char id agar unik.
+    /// Mis. "web-1" -> VM "web-1-a1b2c3d4-master-0".
+    #[serde(default)]
+    pub vm_name_prefix: String,
     /// Cara VM dapat IP: "dhcp" (default, perlu DHCP server + guest-agent
     /// untuk deteksi) atau "static" (ipconfig cloud-init statis dari
     /// static_ip_base — untuk jaringan tanpa DHCP).
@@ -188,6 +193,7 @@ impl Cluster {
             c.ip_mode = "dhcp".to_string();
         }
         c.static_ip_base = c.static_ip_base.trim().to_string();
+        c.vm_name_prefix = c.vm_name_prefix.trim().to_string();
         // enabled_features: hormati pilihan form (boleh kosong = VM polos).
         // DB lama tanpa field ini tetap dapat default via #[serde(default)].
         let now = Utc::now();

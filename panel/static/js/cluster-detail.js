@@ -5,6 +5,7 @@ function fillConn(c){
   const set=(eid,v)=>{const el=document.getElementById(eid);if(el)el.value=v??'';};
   set('eUrl',c.proxmox_url);set('eUser',c.proxmox_user);set('eTokenId',c.token_id);
   set('eNode',c.target_node);set('eTemplate',c.clone_template);
+  set('eVmPrefix',c.vm_name_prefix);
   set('eSshHost',c.ssh_host);set('eSshUser',c.ssh_remote_user||'root');set('eSshPort',c.ssh_port||22);
   const m=document.getElementById('eIpMode');if(m)m.value=c.ip_mode||'dhcp';
   set('eStaticBase',c.static_ip_base);
@@ -20,6 +21,7 @@ async function saveConn(){
     proxmox_url:v('eUrl'),proxmox_user:v('eUser')||'root@pam',token_id:v('eTokenId'),
     token_secret:document.getElementById('eTokenSecret').value,
     target_node:v('eNode'),clone_template:v('eTemplate'),
+    vm_name_prefix:v('eVmPrefix'),
     ssh_host:v('eSshHost'),ssh_remote_user:v('eSshUser')||'root',
     ssh_port:parseInt(v('eSshPort'),10)||22,
     ip_mode:(document.getElementById('eIpMode')||{}).value||'dhcp',

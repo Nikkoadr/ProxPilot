@@ -124,6 +124,9 @@ async fn update_cluster(
     }
     cur.ip_mode = new_mode.to_string();
     cur.static_ip_base = new_base;
+    // Prefix nama VM custom (kosong = otomatis). Ganti prefix + redeploy =
+    // VM BARU (nama beda) — VM lama tidak dihapus otomatis, hapus manual.
+    cur.vm_name_prefix = payload.vm_name_prefix.trim().to_string();
     // Fitur selalu dioverwrite (boleh kosong = VM polos, hanya common).
     cur.enabled_features = payload.enabled_features.clone();
     if !payload.ssh_user.trim().is_empty() {
@@ -527,7 +530,23 @@ async fn run_deployment(state: AppState, id: &str) {
     // 2. Generate terraform files (real token secret, mode 0600).
     state.set_status(&id, "deploying", 22);
     state.push_log(&id, "provision", "Generating Terraform configuration...", "info");
-    if let Err(e) = write_terraform(&state.infra_dir, &cluster) {
+    // Ambil public key SSH host panel untuk diinject via cloud-init
+    // (ciuser+sshkeys) — ansible selalu bisa login ke VM hasil clone.
+    let panel_key: Option<String> = tokio::task::spawn_blocking(|| {
+        let via_wsl = exec::wsl_available();
+        exec::ssh_pubkey_get(via_wsl)
+    })
+    .await
+    .unwrap_or(None);
+    if panel_key.is_none() {
+        state.push_log(
+            &id,
+            "provision",
+            "WARNING: public key SSH panel tidak ditemukan (Generate key di Health dulu). VM mengandalkan key bawaan template — ansible bisa gagal login.",
+            "warning",
+        );
+    }
+    if let Err(e) = write_terraform(&state.infra_dir, &cluster, panel_key.as_deref()) {
         state.push_log(&id, "provision", &format!("Failed to write terraform files: {e}"), "error");
         state.set_status(&id, "error", 22);
         return;
@@ -865,7 +884,10 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) -> bool {
 
 // ---------- terraform filegen ----------
 
-fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
+/// Generate file terraform per cluster. `panel_key` = public key SSH host
+/// panel (None bila belum ada) — diinject via cloud-init (ciuser+sshkeys)
+/// agar ansible selalu bisa login, apa pun default user template-nya.
+fn write_terraform(infra_dir: &str, c: &Cluster, panel_key: Option<&str>) -> std::io::Result<()> {
     let dir = format!("{infra_dir}/terraform/{}", c.id);
     std::fs::create_dir_all(&dir)?;
     // Restrict the dir: terraform.tfvars below holds the real API token.
@@ -893,7 +915,7 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         )
     };
     let vars = format!(
-        "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\nmaster_ipconfigs = {}\nworker_ipconfigs = {}\nname_prefix = \"{}\"\n",
+        "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\nmaster_ipconfigs = {}\nworker_ipconfigs = {}\nname_prefix = \"{}\"\nciuser = {}\nsshkeys = {}\n",
         hcl_escape(&c.proxmox_url),
         hcl_escape(&c.proxmox_user),
         hcl_escape(&c.token_id),
@@ -913,6 +935,8 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         hcl_list(&master_cfg),
         hcl_list(&worker_cfg),
         hcl_escape(&prefix),
+        hcl_str_or_null(Some(vm_ssh_user(c))),
+        hcl_str_or_null(panel_key),
     );
     let tfvars = format!("{dir}/terraform.tfvars");
     std::fs::write(&tfvars, vars)?;
@@ -1028,25 +1052,39 @@ fn static_ipconfigs_for_cluster(c: &Cluster) -> (Vec<String>, Vec<String>) {
     (cfg(m), cfg(w))
 }
 
-/// Prefix nama VM per cluster: slug(nama) + 8 char id.
-/// Mis. cluster "Toko Online" -> "toko-online-a1b2c3d4", VM jadi
-/// "toko-online-a1b2c3d4-master-0". Menjamin tiap project unik di
-/// Proxmox yang sama (nama VM Proxmox tidak boleh kembar).
+/// Prefix nama VM per cluster: custom bila diisi, else slug(nama) — selalu +
+/// 8 char id agar unik. Mis. prefix "web-1" -> "web-1-a1b2c3d4", VM jadi
+/// "web-1-a1b2c3d4-master-0". Menjamin tiap project unik di Proxmox yang
+/// sama (nama VM Proxmox tidak boleh kembar).
 fn vm_prefix(c: &Cluster) -> String {
-    let slug: String = c
-        .name
-        .to_lowercase()
+    let custom = slugify(&c.vm_name_prefix, 30);
+    let base = if custom.is_empty() {
+        let auto = slugify(&c.name, 20);
+        if auto.is_empty() {
+            "cluster".to_string()
+        } else {
+            auto
+        }
+    } else {
+        custom
+    };
+    let short: String = c.id.chars().take(8).collect();
+    format!("{base}-{short}")
+}
+
+/// Huruf/angka kecil + strip, runtuh strip ganda, potong max.
+fn slugify(s: &str, max: usize) -> String {
+    s.to_lowercase()
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
         .collect::<String>()
         .split('-')
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
-        .join("-");
-    let slug: String = slug.chars().take(20).collect();
-    let base = if slug.is_empty() { "cluster".to_string() } else { slug };
-    let short: String = c.id.chars().take(8).collect();
-    format!("{base}-{short}")
+        .join("-")
+        .chars()
+        .take(max)
+        .collect()
 }
 
 /// Playbook ansible sesuai fitur cluster + jumlah worker.
@@ -1295,6 +1333,23 @@ fn hcl_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+/// Nilai string HCL atau `null` (null = argumen dianggap tidak diset).
+fn hcl_str_or_null(v: Option<&str>) -> String {
+    match v.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => format!("\"{}\"", hcl_escape(s)),
+        None => "null".to_string(),
+    }
+}
+
+/// User cloud-init VM (fallback "ubuntu" untuk DB lama yang kosong).
+fn vm_ssh_user(c: &Cluster) -> &str {
+    if c.ssh_user.trim().is_empty() {
+        "ubuntu"
+    } else {
+        c.ssh_user.trim()
+    }
+}
+
 fn terraform_main_tf() -> &'static str {
     r#"# Generated by proxpilot (Rust). Credentials come from the
 # generated terraform.tfvars (mode 0600) next to this file.
@@ -1314,6 +1369,8 @@ variable "master_ram" { type = number }
 variable "worker_cpu" { type = number }
 variable "worker_ram" { type = number }
 variable "name_prefix" { type = string }
+variable "ciuser" { type = string default = null }
+variable "sshkeys" { type = string default = null }
 variable "master_ipconfigs" { type = list(string) default = [] }
 variable "worker_ipconfigs" { type = list(string) default = [] }
 
@@ -1339,6 +1396,8 @@ resource "proxmox_vm_qemu" "master" {
   scsihw = "virtio-scsi-single"
   network { bridge = var.network_bridge firewall = false }
   ipconfig0 = length(var.master_ipconfigs) > count.index ? var.master_ipconfigs[count.index] : "ip=dhcp"
+  ciuser = var.ciuser
+  sshkeys = var.sshkeys
   ssh_user = var.ssh_user
   start = true
   onboot = true
@@ -1359,6 +1418,8 @@ resource "proxmox_vm_qemu" "worker" {
   scsihw = "virtio-scsi-single"
   network { bridge = var.network_bridge firewall = false }
   ipconfig0 = length(var.worker_ipconfigs) > count.index ? var.worker_ipconfigs[count.index] : "ip=dhcp"
+  ciuser = var.ciuser
+  sshkeys = var.sshkeys
   ssh_user = var.ssh_user
   start = true
   onboot = true
@@ -1447,7 +1508,7 @@ mod tests {
         }))
         .unwrap();
         let c = Cluster::new(payload);
-        write_terraform(&infra, &c).unwrap();
+        write_terraform(&infra, &c, None).unwrap();
 
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
         assert!(tfvars.contains("proxmox_token = \"s3cr\\\"et\""), "{tfvars}");
@@ -1586,7 +1647,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
         let infra = base.to_string_lossy().to_string();
         let c = static_cluster("10.0.0.20", 1, 1);
-        write_terraform(&infra, &c).unwrap();
+        write_terraform(&infra, &c, None).unwrap();
 
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
         assert!(tfvars.contains("master_ipconfigs = [\"ip=10.0.0.20/24,gw=192.168.1.1\"]"), "{tfvars}");
@@ -1622,7 +1683,7 @@ mod tests {
         // filegen menulis name_prefix + main.tf memakainya
         let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
         let infra = base.to_string_lossy().to_string();
-        write_terraform(&infra, &a).unwrap();
+        write_terraform(&infra, &a, None).unwrap();
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", a.id)).unwrap();
         assert!(tfvars.contains(&format!("name_prefix = \"{pa}\"")), "{tfvars}");
         let main = std::fs::read_to_string(format!("{infra}/terraform/{}/main.tf", a.id)).unwrap();
@@ -1681,18 +1742,65 @@ mod tests {
         assert_eq!(steps, vec!["playbook-common.yml"]);
     }
 
-    #[test]
+        #[test]
     fn filegen_writes_run_ansible_runner() {
+
         let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
         let infra = base.to_string_lossy().to_string();
         let c = feat_cluster(&["nodejs"], 0);
-        write_terraform(&infra, &c).unwrap();
+        write_terraform(&infra, &c, None).unwrap();
 
         let run = std::fs::read_to_string(format!("{infra}/terraform/{}/run-ansible.sh", c.id)).unwrap();
         assert!(run.contains("playbook-common.yml"), "{run}");
         assert!(run.contains("playbook-nodejs.yml"), "{run}");
         assert!(!run.contains("playbook-master.yml"), "{run}");
         assert!(run.contains("ANSIBLE_DIR"), "{run}");
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn vm_prefix_uses_custom_sanitized_or_auto() {
+        let mut p: Cluster = serde_json::from_value(serde_json::json!({
+            "name": "Toko Online", "token_secret": "x", "vm_name_prefix": "Web-1 Utama!",
+        }))
+        .map(Cluster::new)
+        .unwrap();
+        assert!(vm_prefix(&p).starts_with("web-1-utama-"), "{}", vm_prefix(&p));
+
+        // prefix sampah -> fallback otomatis dari nama cluster
+        p.vm_name_prefix = "!!!".to_string();
+        assert!(vm_prefix(&p).starts_with("toko-online-"), "{}", vm_prefix(&p));
+
+        // kosong -> otomatis
+        p.vm_name_prefix.clear();
+        assert!(vm_prefix(&p).starts_with("toko-online-"), "{}", vm_prefix(&p));
+    }
+
+    #[test]
+    fn filegen_injects_ssh_key_or_null() {
+        let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
+        let infra = base.to_string_lossy().to_string();
+        let c: Cluster = serde_json::from_value(serde_json::json!({
+            "name": "k", "token_secret": "x", "ssh_user": "rocky",
+        }))
+        .map(Cluster::new)
+        .unwrap();
+
+        // Dengan key: ciuser + sshkeys terisi
+        write_terraform(&infra, &c, Some("ssh-ed25519 AAAAtest panel")).unwrap();
+        let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        assert!(tfvars.contains("ciuser = \"rocky\""), "{tfvars}");
+        assert!(tfvars.contains("sshkeys = \"ssh-ed25519 AAAAtest panel\""), "{tfvars}");
+
+        // Tanpa key: null (argumen dianggap tidak diset, template fallback berlaku)
+        write_terraform(&infra, &c, None).unwrap();
+        let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        assert!(tfvars.contains("sshkeys = null"), "{tfvars}");
+
+        let main = std::fs::read_to_string(format!("{infra}/terraform/{}/main.tf", c.id)).unwrap();
+        assert!(main.contains("ciuser = var.ciuser"), "{main}");
+        assert!(main.contains("sshkeys = var.sshkeys"), "{main}");
 
         std::fs::remove_dir_all(&base).ok();
     }
