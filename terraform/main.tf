@@ -77,6 +77,7 @@ resource "proxmox_vm_qemu" "master" {
   network {
     bridge = "vmbr0"
     firewall = false
+    model = "virtio"
   }
 
   # IP address via cloud-init
@@ -84,10 +85,10 @@ resource "proxmox_vm_qemu" "master" {
 
   # SSH key injection
   ssh_user     = var.ssh_user
-  sshkey       = file(pathexpand(var.ssh_public_key))
+  sshkeys      = file(pathexpand(var.ssh_public_key))
 
   # Start after create
-  start     = var.vm_start_on_create
+  oncreate  = var.vm_start_on_create
   onboot    = true
 
   lifecycle {
@@ -118,14 +119,15 @@ resource "proxmox_vm_qemu" "worker1" {
   network {
     bridge = "vmbr0"
     firewall = false
+    model = "virtio"
   }
 
   ipconfig0 = "ip=192.168.1.11/24,gw=192.168.1.1"
 
   ssh_user     = var.ssh_user
-  sshkey       = file(pathexpand(var.ssh_public_key))
+  sshkeys      = file(pathexpand(var.ssh_public_key))
 
-  start     = var.vm_start_on_create
+  oncreate  = var.vm_start_on_create
   onboot    = true
 
   lifecycle {
@@ -156,14 +158,15 @@ resource "proxmox_vm_qemu" "worker2" {
   network {
     bridge = "vmbr0"
     firewall = false
+    model = "virtio"
   }
 
   ipconfig0 = "ip=192.168.1.12/24,gw=192.168.1.1"
 
   ssh_user     = var.ssh_user
-  sshkey       = file(pathexpand(var.ssh_public_key))
+  sshkeys      = file(pathexpand(var.ssh_public_key))
 
-  start     = var.vm_start_on_create
+  oncreate  = var.vm_start_on_create
   onboot    = true
 
   lifecycle {

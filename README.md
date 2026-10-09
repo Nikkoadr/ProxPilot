@@ -35,12 +35,14 @@ ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-workers.yml
 ansible-playbook -i ../ansible/inventory.ini ../ansible/playbook-nginx.yml
 ```
 
-## VM default
+## VM default (bisa diubah semua dari panel)
 
-- `k8s-master` — 4 vCPU, 8 GB RAM
-- `k8s-worker1`, `k8s-worker2` — 2 vCPU, 4 GB RAM
-- Template cloud-init: `ubuntu-22-04-cloudinit` (lihat `terraform/terraform.tfvars.example`)
-- Jaringan DHCP via `vmbr0` (IP statis legacy `192.168.1.10/11/12` hanya di `ansible/inventory.ini` contoh)
+- 1 master (4 vCPU, 8 GB RAM) + 2 worker (2 vCPU, 4 GB RAM) — jumlah/CPU/RAM bebas, `0` worker = 1 VM
+- Nama VM: prefix custom atau otomatis (`prefix-id-master-0`) — unik per projek
+- Template cloud-init: `ubuntu-22-04-cloudinit` / `rocky-9-cloudinit` / custom
+- IP: DHCP via `vmbr0`, atau statik dari base IP (master dulu, worker lanjut)
+- Disk: ikut template, atau resize scsi0 (GB) di storage pilihan; VLAN tag opsional
+- User + SSH key panel diinject via cloud-init (`ciuser`/`sshkeys`); DNS dari field DNS
 
 ## Dev panel (edit Windows, run WSL)
 

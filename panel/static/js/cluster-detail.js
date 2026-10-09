@@ -6,6 +6,8 @@ function fillConn(c){
   set('eUrl',c.proxmox_url);set('eUser',c.proxmox_user);set('eTokenId',c.token_id);
   set('eNode',c.target_node);set('eTemplate',c.clone_template);
   set('eVmPrefix',c.vm_name_prefix);
+  set('eDiskSize',c.disk_size_gb??0);set('eDiskStorage',c.disk_storage||'local-lvm');
+  set('eVlan',c.vlan_tag??-1);
   set('eSshHost',c.ssh_host);set('eSshUser',c.ssh_remote_user||'root');set('eSshPort',c.ssh_port||22);
   const m=document.getElementById('eIpMode');if(m)m.value=c.ip_mode||'dhcp';
   set('eStaticBase',c.static_ip_base);
@@ -22,6 +24,9 @@ async function saveConn(){
     token_secret:document.getElementById('eTokenSecret').value,
     target_node:v('eNode'),clone_template:v('eTemplate'),
     vm_name_prefix:v('eVmPrefix'),
+    disk_size_gb:Math.max(0,parseInt(v('eDiskSize'),10)||0),
+    disk_storage:v('eDiskStorage'),
+    vlan_tag:(()=>{const n=parseInt(v('eVlan'),10);return isNaN(n)?-1:Math.min(4094,Math.max(-1,n));})(),
     ssh_host:v('eSshHost'),ssh_remote_user:v('eSshUser')||'root',
     ssh_port:parseInt(v('eSshPort'),10)||22,
     ip_mode:(document.getElementById('eIpMode')||{}).value||'dhcp',

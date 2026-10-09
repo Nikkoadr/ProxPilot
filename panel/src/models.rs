@@ -63,6 +63,17 @@ pub struct Cluster {
     pub verify_tls: bool,
     #[serde(default = "default_features")]
     pub enabled_features: Vec<String>,
+    /// Ukuran disk OS (GB). 0 = ikut template (tanpa blok disk).
+    /// Harus >= ukuran disk template (shrink tidak didukung Proxmox).
+    /// Template panduan repo memakai scsi0 — blok disk me-resize scsi0.
+    #[serde(default)]
+    pub disk_size_gb: i32,
+    /// Storage Proxmox untuk disk (dipakai bila disk_size_gb > 0).
+    #[serde(default = "default_disk_storage")]
+    pub disk_storage: String,
+    /// VLAN tag 1-4094. -1 = tanpa tag (default).
+    #[serde(default = "default_vlan")]
+    pub vlan_tag: i32,
     /// Prefix nama VM custom (opsional). Kosong = otomatis dari nama cluster.
     /// Disanitasi (huruf/angka/strip) + suffix 8 char id agar unik.
     /// Mis. "web-1" -> VM "web-1-a1b2c3d4-master-0".
@@ -139,6 +150,12 @@ fn default_ssh_port() -> u16 {
 fn default_ip_mode() -> String {
     "dhcp".to_string()
 }
+fn default_disk_storage() -> String {
+    "local-lvm".to_string()
+}
+fn default_vlan() -> i32 {
+    -1
+}
 fn default_true() -> bool {
     true
 }
@@ -194,6 +211,15 @@ impl Cluster {
         }
         c.static_ip_base = c.static_ip_base.trim().to_string();
         c.vm_name_prefix = c.vm_name_prefix.trim().to_string();
+        if c.disk_size_gb < 0 {
+            c.disk_size_gb = 0;
+        }
+        if c.disk_storage.trim().is_empty() {
+            c.disk_storage = default_disk_storage();
+        }
+        if c.vlan_tag < 1 || c.vlan_tag > 4094 {
+            c.vlan_tag = -1;
+        }
         // enabled_features: hormati pilihan form (boleh kosong = VM polos).
         // DB lama tanpa field ini tetap dapat default via #[serde(default)].
         let now = Utc::now();

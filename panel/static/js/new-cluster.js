@@ -77,6 +77,8 @@ async function submit(e){
   const useRemote=document.getElementById('useRemote').checked;
   const body={
     id:'',name:val('name'),vm_name_prefix:val('vm_name_prefix'),
+    disk_size_gb:num('disk_size_gb',0),disk_storage:val('disk_storage')||'local-lvm',
+    vlan_tag:(()=>{const v=num('vlan_tag',-1);return (v>=-1&&v<=4094)?v:-1;})(),
     proxmox_url:val('proxmox_url'),proxmox_user:val('proxmox_user')||'root@pam',
     token_id:val('token_id'),token_secret:document.getElementById('token_secret').value,
     verify_tls:document.getElementById('verify_tls').checked,
