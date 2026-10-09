@@ -74,8 +74,12 @@ function injectLogout(){
 document.addEventListener('DOMContentLoaded',()=>{markActive();refreshConn();setInterval(refreshConn,5000);});
 function clusterRow(c){
   const id=encodeURIComponent(c.id);
+  const masters=c.master_ips||[], workers=c.worker_ips||[];
+  const ipTxt=(masters.length||workers.length)
+    ? `<div class="small text-success">${esc(masters[0]||'-')} · +${workers.length}W</div>`
+    : `<div class="small text-muted">IP belum tersimpan</div>`;
   return `<tr>
-    <td><a href="/cluster-detail.html?id=${id}">${esc(c.name)}</a><div class="small text-muted">${esc(c.id).slice(0,8)}</div></td>
+    <td><a href="/cluster-detail.html?id=${id}">${esc(c.name)}</a><div class="small text-muted">${esc(c.id).slice(0,8)}</div>${ipTxt}</td>
     <td>${esc(c.proxmox_url||'')}</td>
     <td>${c.master_count||1}M / ${c.worker_count||0}W</td>
     <td><span class="badge badge-${badgeFor(c.status)}">${esc(c.status||'pending')}</span></td>

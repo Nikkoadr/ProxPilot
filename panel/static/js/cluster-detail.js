@@ -36,6 +36,7 @@ function render(data){
   const c=data.cluster||data;
   lastCluster=c;
   fillConn(c);
+  renderIps(c);
   document.getElementById('cName').textContent=c.name||id;
   document.getElementById('cMeta').textContent=`${c.master_count||1} master · ${c.worker_count||0} worker · ${esc(c.proxmox_url||'')}`;
   const b=document.getElementById('cStatus');
@@ -55,6 +56,54 @@ function render(data){
   document.getElementById('logs').innerHTML=logs.length?logs.map(logLine).join(''):'<div class="text-muted">No logs yet. Click Deploy.</div>';
   const box=document.getElementById('logBox');box.scrollTop=box.scrollHeight;
   document.getElementById('btnDeploy').style.display=(data.status==='pending'||data.status==='error')?'':'none';
+}
+function renderIps(c){
+  const masters=c.master_ips||[], workers=c.worker_ips||[];
+  const rows=[];
+  const nM=Math.max(c.master_count||1, masters.length);
+  for(let i=0;i<nM;i++){
+    const ip=masters[i]||'(belum ada — placeholder master-'+i+')';
+    rows.push(`<tr><td><strong>master-${i}</strong></td><td>${esc(ip)}</td></tr>`);
+  }
+  const nW=Math.max(c.worker_count||0, workers.length);
+  for(let i=0;i<nW;i++){
+    const ip=workers[i]||('(belum ada — placeholder worker-'+i+')');
+    rows.push(`<tr><td><strong>worker-${i}</strong></td><td>${esc(ip)}</td></tr>`);
+  }
+  const tb=document.getElementById('ipRows');
+  if(tb)tb.innerHTML=rows.length?rows.join(''):'<tr><td colspan="2" class="text-center text-muted">-</td></tr>';
+  const msg=document.getElementById('ipMsg');
+  if(msg){
+    if(masters.length||workers.length){
+      msg.textContent=`Tersimpan di DB: ${masters.length} master, ${workers.length} worker. inventory.ini sudah pakai IP asli.`;
+      msg.className='small mb-2 text-success';
+    } else {
+      msg.textContent='Belum ada IP — Deploy dulu, lalu IP DHCP otomatis tersimpan di sini. Kalau apply OK tapi masih kosong, klik Refresh IPs (tunggu qemu-guest-agent 1-3 mnt).';
+      msg.className='small mb-2 text-muted';
+    }
+  }
+  const sshUser=c.ssh_user||'ubuntu';
+  const inv=[`[k8s_master]`];
+  for(let i=0;i<(c.master_count||1);i++)inv.push(`master-${i} ansible_host=${esc(masters[i]||('master-'+i))} ansible_user=${esc(sshUser)}`);
+  inv.push('',`[k8s_workers]`);
+  for(let i=0;i<(c.worker_count||0);i++)inv.push(`worker-${i} ansible_host=${esc(workers[i]||('worker-'+i))} ansible_user=${esc(sshUser)}`);
+  inv.push('',`[nginx_group]`,`master-0`,'',`[k8s_cluster:children]`,`k8s_master`,`k8s_workers`);
+  const prev=document.getElementById('invPreview');
+  if(prev)prev.textContent=inv.join('\n');
+  const cmds=document.getElementById('ansibleCmds');
+  if(cmds)cmds.textContent=`ansible-playbook -i inventory.ini ansible/playbook-master.yml && ansible-playbook -i inventory.ini ansible/playbook-workers.yml`;
+}
+async function refreshIps(){
+  const msg=document.getElementById('ipMsg');
+  if(msg){msg.textContent='refreshing terraform output...';msg.className='small mb-2 text-muted';}
+  try{
+    const r=await apiPost('/api/clusters/'+encodeURIComponent(id)+'/refresh-ips',{});
+    if(msg){
+      if(r.ok){msg.textContent=`OK: masters [${(r.master_ips||[]).join(', ')}] workers [${(r.worker_ips||[]).join(', ')}]`;msg.className='small mb-2 text-success';}
+      else{msg.textContent=(r.hint||'terraform output masih kosong — tunggu agent/DHCP lalu coba lagi.');msg.className='small mb-2 text-warning';}
+    }
+    poll();
+  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.className='small mb-2 text-danger';}}
 }
 async function poll(){try{render(await apiGet('/api/clusters/'+encodeURIComponent(id)+'/status'));}catch(e){}}
 function connectWs(){
@@ -85,5 +134,6 @@ document.addEventListener('DOMContentLoaded',()=>{
   document.getElementById('btnDeploy').onclick=async()=>{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/deploy',{});poll();};
   document.getElementById('btnDelete').onclick=async()=>{if(!confirm('Delete this cluster?'))return;await fetch('/api/clusters/'+encodeURIComponent(id),{method:'DELETE'});location.href='/index.html';};
   document.getElementById('btnSaveConn').onclick=saveConn;
+  document.getElementById('btnRefreshIps').onclick=refreshIps;
   poll();pollTimer=setInterval(poll,3000);connectWs();
 });

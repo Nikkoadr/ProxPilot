@@ -46,6 +46,13 @@
 <div id="connMsg" class="small mb-1"></div>
 <div class="small text-muted">Alamat Proxmox/SSH/template berubah? Ubah di sini → Save → Deploy ulang. Secret tidak ditampilkan.</div>
 </div></div>
+<div class="card shadow mb-4"><div class="card-header py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary">Node IPs (dari terraform output, tersimpan di DB)</h6><button id="btnRefreshIps" class="btn btn-sm btn-info"><i class="fas fa-sync"></i> Refresh IPs</button></div>
+<div class="card-body"><div id="ipMsg" class="small mb-2 text-muted">Belum ada IP — Deploy dulu, lalu IP DHCP otomatis tersimpan di sini.</div>
+<div class="table-responsive"><table class="table table-bordered table-sm"><thead><tr><th>Node</th><th>ansible_host</th></tr></thead><tbody id="ipRows"><tr><td colspan="2" class="text-center text-muted">-</td></tr></tbody></table></div>
+<div class="small text-muted">inventory.ini dipakai ansible. Setelah IP ketemu, file ditulis ulang otomatis (tidak lagi default <code>master-0</code>).</div>
+<pre class="out mt-2 small" id="invPreview" style="max-height:220px;overflow:auto">-</pre>
+<div class="small mt-2">Lanjut ansible (dari repo root):<br><code id="ansibleCmds">-</code></div>
+</div></div>
 <div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Deployment Logs (realtime)</h6></div><div class="card-body"><div class="log-console" id="logBox"><div id="logs" class="text-muted">connecting...</div></div></div></div>
 </div>
 </div>

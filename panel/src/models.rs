@@ -63,6 +63,12 @@ pub struct Cluster {
     pub verify_tls: bool,
     #[serde(default = "default_features")]
     pub enabled_features: Vec<String>,
+    /// IP hasil `terraform output` (DHCP). Disimpan di DB (kolom JSON `data`),
+    /// jadi survive restart. Kosong = belum pernah sukses apply.
+    #[serde(default)]
+    pub master_ips: Vec<String>,
+    #[serde(default)]
+    pub worker_ips: Vec<String>,
     #[serde(default = "default_status")]
     pub status: String,
     #[serde(default)]
