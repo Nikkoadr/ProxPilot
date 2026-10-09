@@ -1,0 +1,15 @@
+---
+- name: PostgreSQL setup
+  hosts: configured
+  become: yes
+  gather_facts: yes
+
+  pre_tasks:
+    - name: Update apt cache (Debian)
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+  roles:
+    - postgres

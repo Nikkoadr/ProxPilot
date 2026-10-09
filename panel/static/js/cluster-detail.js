@@ -11,9 +11,6 @@ function fillConn(c){
   set('eSshHost',c.ssh_host);set('eSshUser',c.ssh_remote_user||'root');set('eSshPort',c.ssh_port||22);
   const m=document.getElementById('eIpMode');if(m)m.value=c.ip_mode||'dhcp';
   set('eStaticBase',c.static_ip_base);
-  const feats=c.enabled_features||[];
-  const chk=(eid,f)=>{const el=document.getElementById(eid);if(el)el.checked=feats.includes(f);};
-  chk('eFeatK8s','k8s');chk('eFeatNginx','nginx');chk('eFeatNode','nodejs');
   connFilled=true;
 }
 async function saveConn(){
@@ -31,7 +28,6 @@ async function saveConn(){
     ssh_port:parseInt(v('eSshPort'),10)||22,
     ip_mode:(document.getElementById('eIpMode')||{}).value||'dhcp',
     static_ip_base:v('eStaticBase'),
-    enabled_features:collectFeat(),
   });
   try{
     const r=await fetch('/api/clusters/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -74,13 +70,9 @@ function render(data){
   document.getElementById('logs').innerHTML=logs.length?logs.map(logLine).join(''):'<div class="text-muted">No logs yet. Click Deploy.</div>';
   const box=document.getElementById('logBox');box.scrollTop=box.scrollHeight;
   document.getElementById('btnDeploy').style.display=(data.status==='pending'||data.status==='error')?'':'none';
-}
-function collectFeat(){
-  const out=[];
-  if(document.getElementById('eFeatK8s')?.checked)out.push('k8s');
-  if(document.getElementById('eFeatNginx')?.checked)out.push('nginx');
-  if(document.getElementById('eFeatNode')?.checked)out.push('nodejs');
-  return out;
+  document.getElementById('btnDestroy').style.display=(data.status==='running'||data.status==='error')?'':'none';
+  const busy=(data.status==='deploying'||data.status==='provisioning');
+  document.getElementById('btnPlan').style.display=busy?'none':'';
 }
 function renderIps(c){
   const masters=c.master_ips||[], workers=c.worker_ips||[];
@@ -130,7 +122,58 @@ async function refreshIps(){
     poll();
   }catch(e){if(msg){msg.textContent=String(e.message||e);msg.className='small mb-2 text-danger';}}
 }
-async function poll(){try{render(await apiGet('/api/clusters/'+encodeURIComponent(id)+'/status'));}catch(e){}}
+async function poll(){try{render(await apiGet('/api/clusters/'+encodeURIComponent(id)+'/status'));}catch(e){} loadVms();}
+function fmtUptime(s){
+  s=parseInt(s,10)||0;
+  if(s<60)return s+'s';
+  const m=Math.floor(s/60),h=Math.floor(m/60),d=Math.floor(h/24);
+  if(d)return d+'d '+(h%24)+'h';
+  if(h)return h+'h '+(m%60)+'m';
+  return m+'m';
+}
+function fmtMem(mb){if(mb==null)return '-';const m=Math.round(mb/1048576);return m>=1024?(m/1024).toFixed(1)+' GB':m+' MB';}
+async function loadVms(){
+  const tb=document.getElementById('vmRows');
+  try{
+    const r=await apiGet('/api/clusters/'+encodeURIComponent(id)+'/vms');
+    const vms=(r&&r.vms)||[];
+    if(!vms.length){tb.innerHTML='<tr><td colspan="6" class="text-center text-muted">Belum ada VM (Deploy dulu).</td></tr>';return;}
+    tb.innerHTML=vms.map(v=>{
+      const running=(v.status||'').toLowerCase()==='running';
+      const badge=running?'success':'secondary';
+      const cpu=((v.cpu||0)*100).toFixed(1)+'% / '+(v.cpus||'?')+'c';
+      const mem=fmtMem(v.mem)+' / '+fmtMem(v.maxmem);
+      let btns='';
+      if(running){
+        btns=`<button class="btn btn-sm btn-warning" onclick="vmAct(${v.vmid},'reboot',1)" title="Reboot"><i class="fas fa-redo"></i></button>
+        <button class="btn btn-sm btn-secondary ml-1" onclick="vmAct(${v.vmid},'shutdown',1)" title="Shutdown (graceful)"><i class="fas fa-power-off"></i></button>
+        <button class="btn btn-sm btn-danger ml-1" onclick="vmAct(${v.vmid},'stop',1)" title="Stop (paksa)"><i class="fas fa-stop"></i></button>`;
+      }else{
+        btns=`<button class="btn btn-sm btn-success" onclick="vmAct(${v.vmid},'start',0)" title="Start"><i class="fas fa-play"></i></button>`;
+      }
+      return `<tr><td><strong>${esc(v.name)}</strong></td><td>${v.vmid}</td>
+        <td><span class="badge badge-${badge}">${esc(v.status)}</span></td>
+        <td class="small">${cpu}<br>${mem}</td><td class="small">${fmtUptime(v.uptime)}</td><td>${btns}</td></tr>`;
+    }).join('');
+  }catch(e){tb.innerHTML='<tr><td colspan="6" class="text-center text-muted">VM list unavailable (cek koneksi Proxmox).</td></tr>';}
+}
+async function preflight(){
+  const card=document.getElementById('preCard'), rows=document.getElementById('preRows');
+  card.style.display='';
+  rows.innerHTML='<div class="text-muted">mengecek api → template → terraform/ssh → ip...</div>';
+  try{
+    const r=await apiPost('/api/clusters/'+encodeURIComponent(id)+'/preflight',{});
+    rows.innerHTML=(r.checks||[]).map(c=>
+      `<div><span class="badge badge-${c.ok?'success':'danger'}">${c.ok?'OK':'FAIL'}</span> <strong>${esc(c.name)}</strong> <span class="small text-muted">${esc(c.detail||'')}</span></div>`
+    ).join('')+`<div class="mt-1 small ${r.ok?'text-success':'text-danger'}">${r.ok?'Siap Deploy.':'Perbaiki yang FAIL dulu, baru Deploy.'}</div>`;
+  }catch(e){rows.innerHTML='<div class="text-danger">'+esc(String(e.message||e))+'</div>';}
+}
+async function vmAct(vmid,action,confirmIt){
+  if(confirmIt&&!confirm(action+' VM '+vmid+'?'))return;
+  try{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/vms/'+vmid+'/'+action,{});}
+  catch(e){alert(String(e.message||e));}
+  loadVms();poll();
+}
 function connectWs(){
   try{ws&&ws.close();}catch(e){}
   const proto=location.protocol==='https:'?'wss':'ws';
@@ -156,9 +199,24 @@ function connectWs(){
 }
 document.addEventListener('DOMContentLoaded',()=>{
   if(!id){document.getElementById('cName').textContent='missing ?id=';return;}
-  document.getElementById('btnDeploy').onclick=async()=>{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/deploy',{});poll();};
-  document.getElementById('btnDelete').onclick=async()=>{if(!confirm('Delete this cluster?'))return;await fetch('/api/clusters/'+encodeURIComponent(id),{method:'DELETE'});location.href='/index.html';};
+  document.getElementById('btnDeploy').onclick=async()=>{
+    try{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/deploy',{});poll();}
+    catch(e){alert(String(e.message||e));}
+  };
+  document.getElementById('btnPlan').onclick=async()=>{
+    try{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/plan',{});poll();}
+    catch(e){alert(String(e.message||e));}
+  };
+  document.getElementById('btnPreflight').onclick=preflight;
+  document.getElementById('btnDestroy').onclick=async()=>{
+    if(!confirm('Destroy SEMUA VM cluster ini di Proxmox? Definisi cluster tetap tersimpan (bisa Deploy ulang).'))return;
+    try{await apiPost('/api/clusters/'+encodeURIComponent(id)+'/destroy',{});poll();}
+    catch(e){alert(String(e.message||e));}
+  };
+  document.getElementById('btnDelete').onclick=async()=>{if(!confirm('Delete this cluster record? (Hancurkan VM dulu via Destroy VMs bila masih ada — Delete hanya hapus data panel)'))return;await fetch('/api/clusters/'+encodeURIComponent(id),{method:'DELETE'});location.href='/index.html';};
   document.getElementById('btnSaveConn').onclick=saveConn;
   document.getElementById('btnRefreshIps').onclick=refreshIps;
+  document.getElementById('btnVmRefresh').onclick=loadVms;
+  document.getElementById('btnConfigure').href='/configure.html?id='+encodeURIComponent(id);
   poll();pollTimer=setInterval(poll,3000);connectWs();
 });

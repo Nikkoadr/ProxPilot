@@ -326,6 +326,64 @@ pub struct SshCopyIdRequest {
     pub ssh_password: String,
 }
 
+/// PUT /api/setup — koneksi Proxmox + SSH, disimpan SEKALI di settings DB.
+/// `token_secret` kosong / "******" = pakai yang tersimpan.
+#[derive(Debug, Deserialize)]
+pub struct SetupBody {
+    #[serde(default)]
+    pub proxmox_url: String,
+    #[serde(default)]
+    pub proxmox_user: String,
+    #[serde(default)]
+    pub token_id: String,
+    #[serde(default)]
+    pub token_secret: String,
+    #[serde(default)]
+    pub verify_tls: bool,
+    #[serde(default)]
+    pub target_node: String,
+    #[serde(default)]
+    pub ssh_host: String,
+    #[serde(default)]
+    pub ssh_user: String,
+    #[serde(default = "default_ssh_port_fn")]
+    pub ssh_port: u16,
+}
+
+/// POST /api/vms/clone — clone template langsung via API.
+/// Nama + VMID sesuai permintaan (VMID kosong = nextid otomatis).
+#[derive(Debug, Deserialize)]
+pub struct CloneBody {
+    pub template: String,
+    pub name: String,
+    #[serde(default)]
+    pub vmid: Option<u64>,
+    #[serde(default = "default_true")]
+    pub full: bool,
+    #[serde(default)]
+    pub storage: String,
+    /// IP statis (kosong = DHCP).
+    #[serde(default)]
+    pub static_ip: String,
+    #[serde(default)]
+    pub gateway: String,
+    #[serde(default)]
+    pub ciuser: String,
+    #[serde(default)]
+    pub nameserver: String,
+    #[serde(default = "default_true")]
+    pub start: bool,
+}
+
+/// POST /api/configure — tanam template konfigurasi ke VM terpilih.
+#[derive(Debug, Deserialize)]
+pub struct ConfigureBody {
+    pub vmids: Vec<u64>,
+    pub template: String,
+    #[serde(default)]
+    pub ssh_user: String,
+}
+
 fn default_ssh_remote() -> String {
     "root".to_string()
 }

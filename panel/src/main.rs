@@ -23,11 +23,12 @@ async fn main() {
 
     let base = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let (infra_dir, static_dir) = resolve_dirs(&base);
+    let ansible_dir = resolve_ansible(&base);
     std::fs::create_dir_all(format!("{infra_dir}/terraform")).ok();
 
     let database = db::Db::open().expect("open sqlite db");
     auth::ensure_seed(database.clone()).await;
-    let state = store::AppState::new(database, infra_dir, static_dir);
+    let state = store::AppState::new(database, infra_dir, static_dir, ansible_dir);
 
     // Public: login + liveness (for service checks).
     let public = Router::new()
@@ -108,6 +109,30 @@ fn resolve_dirs(base: &std::path::Path) -> (String, String) {
     tracing::info!("infra_dir: {infra_dir}");
     tracing::info!("static_dir: {static_dir}");
     (infra_dir, static_dir)
+}
+
+/// Resolve folder ansible (playbook+roles): env PANEL_ANSIBLE, lalu
+/// `<cwd>/../ansible` (dev dari folder panel/), lalu install path.
+/// Dipakai eksekusi Configure (pilih VM -> tanam template).
+fn resolve_ansible(base: &std::path::Path) -> String {
+    if let Ok(v) = std::env::var("PANEL_ANSIBLE") {
+        if !v.trim().is_empty() {
+            tracing::info!("ansible_dir (env): {v}");
+            return v;
+        }
+    }
+    for cand in [
+        base.join("..").join("ansible").to_string_lossy().to_string(),
+        "/usr/share/proxpilot/ansible".to_string(),
+    ] {
+        if std::path::Path::new(&cand).join("playbook-common.yml").exists() {
+            tracing::info!("ansible_dir: {cand}");
+            return cand;
+        }
+    }
+    let fallback = "/usr/share/proxpilot/ansible".to_string();
+    tracing::info!("ansible_dir (fallback, mungkin kosong): {fallback}");
+    fallback
 }
 
 async fn health_open() -> impl IntoResponse {

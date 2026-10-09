@@ -29,6 +29,8 @@ function markActive(){
   document.querySelectorAll('#accordionSidebar .nav-item').forEach(li=>li.classList.remove('active'));
   let id='nav-dash';
   if(p.includes('new-cluster'))id='nav-new';
+  else if(p.includes('clone-vm'))id='nav-clone';
+  else if(p.includes('configure'))id='nav-config';
   else if(p.includes('cluster-detail'))id='nav-dash';
   else if(p.includes('health'))id='nav-health';
   else if(p.includes('settings'))id='nav-settings';

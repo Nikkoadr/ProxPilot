@@ -1,5 +1,9 @@
 ---
-- name: Install Docker
+# Base semua VM K8s: Docker + kubeadm/kubelet/kubectl + OS prep.
+# Debian family (apt) dan RedHat family (dnf, mis. Rocky Linux).
+# User diambil dari {{ ansible_user }} (panel mengisi via inventory: ubuntu/rocky/...).
+
+- name: Install Docker (Debian)
   block:
     - name: Add Docker GPG key
       apt_key:
@@ -8,7 +12,7 @@
 
     - name: Add Docker repository
       apt_repository:
-        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+        repo: "deb [arch=amd64] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
         state: present
 
     - name: Install Docker
@@ -28,13 +32,45 @@
         state: started
         enabled: yes
 
-    - name: Add ubuntu to docker group
+    - name: Add ssh user to docker group
       user:
-        name: ubuntu
+        name: "{{ ansible_user }}"
         groups: docker
         append: yes
+  when: ansible_os_family == "Debian"
 
-- name: Install Kubeadm, Kubelet, Kubectl
+- name: Install Docker (RedHat)
+  block:
+    - name: Add Docker repository
+      get_url:
+        url: https://download.docker.com/linux/centos/docker-ce.repo
+        dest: /etc/yum.repos.d/docker-ce.repo
+        mode: '0644'
+
+    - name: Install Docker
+      dnf:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Start and enable Docker
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ssh user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+  when: ansible_os_family == "RedHat"
+
+- name: Install Kubeadm, Kubelet, Kubectl (Debian)
   block:
     - name: Add Kubernetes GPG key
       apt_key:
@@ -55,17 +91,11 @@
         state: present
         update_cache: yes
 
-    - name: Hold kubelet and kubeadm
-      dpkg_selection:
-        name: kubelet
-        selection: hold
-      ignore_errors: yes
-
-    - name: Hold kubectl
-      dpkg_selection:
-        name: kubectl
-        selection: hold
-      ignore_errors: yes
+    - name: Hold k8s packages (prevent auto-upgrade)
+      # dpkg_selection butuh collection community.general — apt-mark selalu ada.
+      command: apt-mark hold kubelet kubeadm kubectl
+      register: hold_out
+      changed_when: "'set on hold' in hold_out.stdout"
 
     - name: Start and enable kubelet
       systemd:
@@ -73,3 +103,59 @@
         state: started
         enabled: yes
         daemon_reload: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install Kubeadm, Kubelet, Kubectl (RedHat)
+  block:
+    - name: Add Kubernetes repository
+      yum_repository:
+        name: kubernetes
+        description: Kubernetes stable v1.30
+        baseurl: https://pkgs.k8s.io/core:/stable:/v1.30/rpm/
+        enabled: yes
+        gpgcheck: yes
+        repo_gpgcheck: yes
+        gpgkey: https://pkgs.k8s.io/core:/stable:/v1.30/rpm/repodata/repomd.xml.key
+
+    - name: Install kubelet kubeadm kubectl
+      dnf:
+        name:
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+      # Catatan: tanpa versionlock di EL (paket dnf-plugins-core/versionlock
+      # belum tentu ada) — pin versi K8s via repo v1.30 di atas.
+
+    - name: Start and enable kubelet
+      systemd:
+        name: kubelet
+        state: started
+        enabled: yes
+        daemon_reload: yes
+  when: ansible_os_family == "RedHat"
+
+# OS prep K8s (dipindah dari role master agar worker ikut dapat):
+# kubeadm (init maupun join) wajib swap mati + modul + sysctl ini.
+- name: Disable swap
+  shell: swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab
+  changed_when: true
+
+- name: Load kernel modules
+  # modul modprobe butuh community.general — command selalu ada (idempoten).
+  command: "modprobe {{ item }}"
+  loop:
+    - overlay
+    - br_netfilter
+  changed_when: false
+
+- name: Set sysctl params
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { key: 'net.ipv4.ip_forward', value: '1' }

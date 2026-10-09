@@ -1,0 +1,32 @@
+---
+# PostgreSQL server (auth peer lokal default — atur password/akses manual
+# sesuai kebutuhan aplikasi). Debian/Ubuntu (apt) dan RedHat/Rocky (dnf).
+- name: Install PostgreSQL (Debian)
+  apt:
+    name: postgresql
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install PostgreSQL (RedHat)
+  dnf:
+    name: postgresql-server
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Initialize database (RedHat)
+  command: postgresql-setup --initdb
+  args:
+    creates: /var/lib/pgsql/data/postgresql.conf
+  when: ansible_os_family == "RedHat"
+
+- name: Start and enable PostgreSQL
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Check PostgreSQL ready
+  command: pg_isready
+  register: pg_ready
+  changed_when: false

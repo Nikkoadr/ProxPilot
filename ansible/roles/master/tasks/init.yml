@@ -1,62 +1,44 @@
 ---
+# Di-include dari role master, HANYA di master pertama
+# (when: inventory_hostname == groups['k8s_master'] | first).
+# Master tambahan tidak diinit (join control-plane HA manual, di luar scope).
 - name: Initialize Kubernetes cluster
-  command: kubeadm init --pod-network-cidr=10.244.0.0/16 --token-ttl=0
-  register: kubeadm_init
+  command: kubeadm init --pod-network-cidr={{ pod_network_cidr }} --token-ttl=0
+  args:
+    creates: /etc/kubernetes/admin.conf
   become: yes
-  when: inventory_hostname == 'master'
 
 - name: Create .kube directory
   file:
-    path: /home/ubuntu/.kube
+    path: "/home/{{ ansible_user }}/.kube"
     state: directory
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
     mode: '0755'
   become: yes
-  when: inventory_hostname == 'master'
 
 - name: Copy admin.conf to user kube config
   copy:
     src: /etc/kubernetes/admin.conf
-    dest: /home/ubuntu/.kube/config
+    dest: "/home/{{ ansible_user }}/.kube/config"
     remote_src: yes
-    owner: ubuntu
-    group: ubuntu
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
     mode: '0644'
-  when: inventory_hostname == 'master'
+  become: yes
 
 - name: Install Calico CNI
   command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
   become: yes
-  when: inventory_hostname == 'master'
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
 
-- name: Get join command
-  command: kubeadm token create --print-join-command
-  register: join_command
+- name: Write join command on master
+  shell: kubeadm token create --print-join-command > /tmp/k8s-join.sh && chmod 700 /tmp/k8s-join.sh
   become: yes
-  when: inventory_hostname == 'master'
 
-- name: Store join command
-  set_fact:
-    k8s_join_command: "{{ join_command.stdout }}"
-  when: inventory_hostname == 'master'
-
-- name: Save join command to file
-  copy:
-    content: "{{ k8s_join_command }}"
-    dest: /tmp/join-command.sh
-    owner: root
-    group: root
-    mode: '0644'
-  delegate_to: master
-  run_once: yes
-  when: inventory_hostname == 'master'
-
-- name: Fetch join command to localhost
+- name: Fetch join command to controller
   fetch:
-    src: /tmp/join-command.sh
-    dest: /tmp/join-command-{{ inventory_hostname }}.sh
+    src: /tmp/k8s-join.sh
+    dest: /tmp/k8s-join.sh
     flat: yes
-  delegate_to: master
-  run_once: yes
-  ignore_errors: yes

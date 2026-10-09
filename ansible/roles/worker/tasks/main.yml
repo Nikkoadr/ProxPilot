@@ -1,9 +1,18 @@
 ---
-- name: Join worker to cluster
-  command: "/bin/bash /tmp/join-command.sh"
+# Dijalankan playbook-workers (hosts: k8s_workers).
+# File /tmp/k8s-join.sh di controller berasal dari playbook-master
+# (fetch); kalau belum ada berarti master belum diinit — gagal dengan jelas.
+- name: Copy join script to worker
+  copy:
+    src: /tmp/k8s-join.sh
+    dest: /tmp/k8s-join.sh
+    owner: root
+    group: root
+    mode: '0700'
   become: yes
-  delegate_to: master
-  run_once: yes
-  when:
-    - ansible_hostname != 'master'
-    - lookup('file', '/tmp/join-command-k8s-master.sh', errors='strict') is defined
+
+- name: Join worker to cluster
+  command: /tmp/k8s-join.sh
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  become: yes

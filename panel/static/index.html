@@ -2,48 +2,139 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Proxmox Panel — Dashboard</title>
+<title>ProxPilot — Dashboard</title>
 <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
 <link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
 <link href="/css/custom.css" rel="stylesheet">
+<style>
+.workflow{counter-reset:step}.wf-step{position:relative;padding-left:56px;min-height:48px}.wf-step::before{counter-increment:step;content:counter(step);position:absolute;left:0;top:0;width:36px;height:36px;border-radius:50%;background:#e3e8f0;color:#5a5c69;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}.wf-step.done::before{background:#1cc88a;color:#fff}.wf-step.active::before{background:#4e73df;color:#fff;box-shadow:0 0 0 3px rgba(78,115,223,.25)}.wf-line{position:absolute;left:17px;top:36px;width:2px;height:calc(100% - 18px);background:#e3e8f0}.wf-step:last-child .wf-line{display:none}
+.vm-card{transition:transform .15s,box-shadow .15s}.vm-card:hover{transform:translateY(-2px);box-shadow:0 .5rem 1rem rgba(0,0,0,.15)!important}
+.badge-live{background:#1cc88a;color:#fff}.badge-stop{background:#e3e8f0;color:#5a5c69}.badge-run{background:#4e73df;color:#fff}
+.stat-card{border-left-width:4px;border-left-style:solid}.stat-card.s{border-left-color:#1cc88a}.stat-card.w{border-left-color:#f6c23e}.stat-card.p{border-left-color:#36b9cc}.stat-card.d{border-left-color:#e74a3b}.stat-card.i{border-left-color:#4e73df}.stat-card.se{border-left-color:#858796}
+</style>
 </head>
 <body id="page-top">
 <div id="wrapper">
 <ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
-<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">ProxPilot</div></a>
 <hr class="sidebar-divider my-0">
 <li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
-<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
 <li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
 <hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
 </ul>
 <div id="content-wrapper" class="d-flex flex-column"><div id="content">
 <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
 <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
 <span class="conn-pill"><span id="connDot" class="rounded-circle bg-secondary d-inline-block" style="width:10px;height:10px"></span> <span id="connText" class="text-muted">connecting...</span></span>
-<ul class="navbar-nav ml-auto"><li class="nav-item"><span class="nav-link text-muted small">Rust + SB Admin 2 · realtime</span></li></ul>
 </nav>
 <div class="container-fluid">
-<div class="d-sm-flex align-items-center justify-content-between mb-4">
-<h1 class="h3 mb-0 text-gray-800">Dashboard</h1>
-<div><span class="text-muted small mr-2" id="clock"></span><a href="/new-cluster.html" class="btn btn-primary btn-sm"><i class="fas fa-plus"></i> New Cluster</a></div>
+
+<!-- Workflow Stepper -->
+<div class="card shadow mb-4">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-route mr-1"></i>Panduan Workflow</h6></div>
+<div class="card-body">
+<div class="row no-gutters workflow">
+<div class="col-md-4 wf-step active" id="wf1">
+<div class="wf-line"></div>
+<div class="font-weight-bold">1. Test Koneksi</div>
+<div class="small text-muted">Test SSH &amp; API Proxmox dari WSL</div>
+<div class="mt-2"><a href="/health.html" class="btn btn-sm btn-primary"><i class="fas fa-play"></i> Buka Health</a></div>
 </div>
+<div class="col-md-4 wf-step" id="wf2">
+<div class="wf-line"></div>
+<div class="font-weight-bold">2. Clone VM</div>
+<div class="small text-muted">Clone template, pilih nama &amp; ID sendiri</div>
+<div class="mt-2"><a href="/clone-vm.html" class="btn btn-sm btn-secondary" id="btnWfClone"><i class="fas fa-clone"></i> Clone VM</a></div>
+</div>
+<div class="col-md-4 wf-step" id="wf3">
+<div class="wf-line"></div>
+<div class="font-weight-bold">3. Configure</div>
+<div class="small text-muted">Pilih VM, tanam config (k8s/redis/db/nodejs)</div>
+<div class="mt-2"><a href="/configure.html" class="btn btn-sm btn-secondary" id="btnWfConfig"><i class="fas fa-cog"></i> Configure</a></div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- Stats -->
 <div class="row">
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-success shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-success text-uppercase mb-1">Running</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statRunning">-</div></div></div></div>
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-warning shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Deploying</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statDeploying">-</div></div></div></div>
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-primary shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Clusters</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statClusters">-</div></div></div></div>
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-info shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-info text-uppercase mb-1">Masters</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statMasters">-</div></div></div></div>
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-info shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-info text-uppercase mb-1">Workers</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statWorkers">-</div></div></div></div>
-<div class="col-xl-2 col-md-4 mb-4"><div class="card border-left-secondary shadow h-100 py-2"><div class="card-body"><div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">Proxmox nodes</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statNodes">-</div></div></div></div>
+<div class="col-xl-3 col-md-6 mb-4"><div class="card border-left-success shadow h-100 py-2 stat-card s"><div class="card-body"><div class="text-xs font-weight-bold text-success text-uppercase mb-1">Running VMs</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statVms">-</div></div></div></div>
+<div class="col-xl-3 col-md-6 mb-4"><div class="card border-left-warning shadow h-100 py-2 stat-card w"><div class="card-body"><div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Deploying</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statDeploying">-</div></div></div></div>
+<div class="col-xl-3 col-md-6 mb-4"><div class="card border-left-primary shadow h-100 py-2 stat-card p"><div class="card-body"><div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Clusters</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statClusters">-</div></div></div></div>
+<div class="col-xl-3 col-md-6 mb-4"><div class="card border-left-secondary shadow h-100 py-2 stat-card se"><div class="card-body"><div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">Proxmox Nodes</div><div class="h5 mb-0 font-weight-bold text-gray-800" id="statNodes">-</div></div></div></div>
 </div>
-<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Environment (native tools)</h6></div><div class="card-body"><div class="row" id="toolsRow"><div class="text-muted small">loading...</div></div><div class="small mt-2"><a href="/health.html">Open Health &amp; SSH page →</a></div></div></div>
-<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Proxmox Nodes (live when token works, else mock)</h6></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Node</th><th>Status</th><th>CPU</th><th>Memory</th></tr></thead><tbody id="nodeRows"><tr><td colspan="4" class="text-center text-muted">loading...</td></tr></tbody></table></div></div></div>
-<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Clusters</h6></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Name</th><th>Proxmox</th><th>Size</th><th>Status</th><th></th></tr></thead><tbody id="clusterRows"></tbody></table></div></div></div>
+
+<!-- Quick Actions -->
+<div class="row mb-4">
+<div class="col-lg-4 mb-4">
+<div class="card shadow h-100">
+<div class="card-header py-3 bg-success text-white"><h6 class="m-0 font-weight-bold"><i class="fas fa-heartbeat"></i> Step 1: Health &amp; SSH</h6></div>
+<div class="card-body">
+<p class="small text-muted">Test koneksi SSH dari WSL ke server Proxmox. Generate key, copy ke server, test koneksi.</p>
+<div class="mb-2"><strong>SSH Key:</strong> <span id="qKeyState" class="badge badge-secondary">loading...</span></div>
+<div class="mb-2"><strong>Tools:</strong> <span id="qToolsState" class="badge badge-secondary">loading...</span></div>
+<a href="/health.html" class="btn btn-success btn-block"><i class="fas fa-arrow-right"></i> Buka Health &amp; SSH</a>
 </div>
 </div>
-<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>Proxmox Panel Rust · Axum + SB Admin 2 · local / SSH remote</span></div></div></footer>
+</div>
+<div class="col-lg-4 mb-4">
+<div class="card shadow h-100">
+<div class="card-header py-3 bg-info text-white"><h6 class="m-0 font-weight-bold"><i class="fas fa-clone"></i> Step 2: Clone VM</h6></div>
+<div class="card-body">
+<p class="small text-muted">Clone template VM langsung lewat API Proxmox. Tentukan nama, VMID, CPU, RAM, dan IP sendiri.</p>
+<div class="mb-2"><strong>Template:</strong> <span id="qTemplateCount" class="badge badge-info">-</span></div>
+<a href="/clone-vm.html" class="btn btn-info btn-block text-white"><i class="fas fa-arrow-right"></i> Clone VM Baru</a>
 </div>
 </div>
+</div>
+<div class="col-lg-4 mb-4">
+<div class="card shadow h-100">
+<div class="card-header py-3 bg-warning text-white"><h6 class="m-0 font-weight-bold"><i class="fas fa-cogs"></i> Step 3: Configure</h6></div>
+<div class="card-body">
+<p class="small text-muted">Pilih VM yang sudah di-clone, tanamkan konfigurasi via Ansible: k8s master/worker, redis, postgres, nginx, nodejs.</p>
+<div class="mb-2"><strong>VM Ready:</strong> <span id="qVmReady" class="badge badge-warning">-</span></div>
+<a href="/configure.html" class="btn btn-warning btn-block"><i class="fas fa-arrow-right"></i> Configure VM</a>
+</div>
+</div>
+</div>
+</div>
+
+<!-- All VMs -->
+<div class="card shadow mb-4">
+<div class="card-header py-3 d-flex justify-content-between align-items-center">
+<h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-hdd"></i> Semua VM (Global)</h6>
+<div>
+<button id="btnVmRefresh" class="btn btn-sm btn-outline-secondary"><i class="fas fa-sync"></i> Refresh</button>
+</div>
+</div>
+<div class="card-body">
+<div class="table-responsive">
+<table class="table table-bordered table-hover">
+<thead><tr><th>VMID</th><th>Nama</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Aksi</th></tr></thead>
+<tbody id="vmRows"><tr><td colspan="7" class="text-center text-muted">loading...</td></tr></tbody>
+</table>
+</div>
+</div>
+</div>
+
+<!-- Clusters -->
+<div class="card shadow mb-4">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-cluster"></i> Cluster Terraform</h6></div>
+<div class="card-body">
+<div class="table-responsive">
+<table class="table table-bordered">
+<thead><tr><th>Nama</th><th>Proxmox</th><th>Size</th><th>Status</th><th></th></tr></thead>
+<tbody id="clusterRows"></tbody>
+</table>
+</div>
+</div>
+</div>
+
+</div><!-- /container -->
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>ProxPilot · Test SSH → Clone VM → Configure</span></div></div></footer>
+</div></div>
 <a class="scroll-to-top rounded" href="#page-top"><i class="fas fa-angle-up"></i></a>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.3/js/bootstrap.bundle.min.js"></script>

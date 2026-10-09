@@ -1,0 +1,27 @@
+---
+# Redis server (localhost binding default — aman untuk cache/sesi lokal).
+# Debian/Ubuntu (apt) dan RedHat/Rocky (dnf). Core-only modules.
+- name: Install Redis (Debian)
+  apt:
+    name: redis-server
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install Redis (RedHat)
+  dnf:
+    name: redis
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Start and enable Redis
+  service:
+    name: "{{ 'redis-server' if ansible_os_family == 'Debian' else 'redis' }}"
+    state: started
+    enabled: yes
+
+- name: Check Redis ping
+  command: redis-cli ping
+  register: redis_ping
+  changed_when: false
+  failed_when: redis_ping.stdout.strip() != "PONG"

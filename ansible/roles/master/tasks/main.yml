@@ -1,29 +1,14 @@
 ---
-- name: Disable swap
-  shell: swapoff -a && sed -i '/ swap / s/^/#/' /etc/fstab
-  changed_when: true
-
-- name: Load kernel modules
-  modprobe: name={{ item }} state=present
-  loop:
-    - overlay
-    - br_netfilter
-  ignore_errors: yes
-
-- name: Set sysctl params
-  sysctl:
-    name: "{{ item.key }}"
-    value: "{{ item.value }}"
-    state: present
-    reload: yes
-  loop:
-    - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
-    - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
-    - { key: 'net.ipv4.ip_forward', value: '1' }
-
+# Persiapan khusus master. OS prep umum (swap/modul/sysctl) ada di role
+# `common` agar worker ikut dapat. Init control-plane ada di init.yml
+# (di-include di bawah, hanya master pertama — sisanya join manual/HA).
 - name: Update hosts file
   lineinfile:
     path: /etc/hosts
     line: "{{ hostvars[inventory_hostname]['ansible_default_ipv4']['address'] }} {{ inventory_hostname }}"
     state: present
   when: hostvars[inventory_hostname]['ansible_default_ipv4']['address'] is defined
+
+- name: Initialize control plane (first master only)
+  include_tasks: init.yml
+  when: inventory_hostname == (groups['k8s_master'] | first)

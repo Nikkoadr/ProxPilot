@@ -65,9 +65,14 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 fi
 rm -rf /tmp/panel-static
 if git clone --depth 1 --branch master --filter=blob:none --sparse "$CLONE_URL" /tmp/panel-static 2>/dev/null \
-  && (cd /tmp/panel-static && git sparse-checkout set panel/static 2>/dev/null); then
+  && (cd /tmp/panel-static && git sparse-checkout set panel/static ansible 2>/dev/null); then
   $SUDO mkdir -p "$STATIC_DST"
   $SUDO cp -r /tmp/panel-static/panel/static/. "$STATIC_DST/"
+  if [[ -d /tmp/panel-static/ansible ]]; then
+    $SUDO mkdir -p /usr/share/proxpilot/ansible
+    $SUDO cp -r /tmp/panel-static/ansible/. /usr/share/proxpilot/ansible/
+    echo "ansible: refreshed ($TAG)"
+  fi
   rm -rf /tmp/panel-static
   echo "static: refreshed ($TAG)"
 else

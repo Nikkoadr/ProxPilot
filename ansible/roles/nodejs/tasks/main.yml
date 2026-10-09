@@ -1,27 +1,52 @@
 ---
 # Node.js LTS (NodeSource) + pm2 — untuk VM projek aplikasi, tanpa Kubernetes.
-# Debian/Ubuntu family (apt). Variabel: node_major (default "22").
-- name: Add NodeSource GPG key
-  apt_key:
-    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-    state: present
+# Debian/Ubuntu (apt) dan RedHat/Rocky (dnf). Variabel: node_major (default "22").
+- name: NodeSource (Debian)
+  block:
+    - name: Add NodeSource GPG key
+      apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        state: present
 
-- name: Add NodeSource repository
-  apt_repository:
-    repo: "deb https://deb.nodesource.com/node_{{ node_major | default('22') }}.x nodistro main"
-    state: present
+    - name: Add NodeSource repository
+      apt_repository:
+        repo: "deb https://deb.nodesource.com/node_{{ node_major | default('22') }}.x nodistro main"
+        state: present
 
-- name: Install Node.js (includes npm)
-  apt:
-    name: nodejs
-    state: present
-    update_cache: yes
+    - name: Install Node.js (includes npm)
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: NodeSource (RedHat)
+  block:
+    - name: Add NodeSource GPG key
+      rpm_key:
+        key: https://rpm.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        state: present
+
+    - name: Add NodeSource repository
+      yum_repository:
+        name: nodesource
+        description: "Node.js {{ node_major | default('22') }}.x"
+        baseurl: "https://rpm.nodesource.com/pub_{{ node_major | default('22') }}.x/el/$releasever/$basearch"
+        enabled: yes
+        gpgcheck: yes
+        gpgkey: https://rpm.nodesource.com/gpgkey/nodesource-repo.gpg.key
+
+    - name: Install Node.js (includes npm)
+      dnf:
+        name: nodejs
+        state: present
+  when: ansible_os_family == "RedHat"
 
 - name: Install pm2 globally
-  npm:
-    name: pm2
-    global: yes
-    state: present
+  # modul npm butuh community.general — command selalu ada.
+  command: npm install -g pm2
+  register: pm2_out
+  changed_when: "'added' in pm2_out.stdout or 'updated' in pm2_out.stdout"
 
 - name: Check node version
   command: node --version

@@ -1,50 +1,150 @@
-async function loadDashboard(){
-  try{
-    const [summary,clusters,nodes,tools]=await Promise.all([
-      apiGet('/api/realtime/summary'),apiGet('/api/clusters'),apiGet('/api/nodes'),apiGet('/api/tools')
+async function loadDashboard() {
+  try {
+    const [summary, clusters, nodes, tools, allVms, sshKey] = await Promise.all([
+      apiGet('/api/realtime/summary'),
+      apiGet('/api/clusters'),
+      apiGet('/api/nodes'),
+      apiGet('/api/tools'),
+      apiGet('/api/vms').catch(() => ({ vms: [] })),
+      apiGet('/api/ssh/key').catch(() => ({})),
     ]);
-    setText('statRunning',summary.running);setText('statDeploying',summary.deploying);
-    setText('statMasters',summary.master_nodes);setText('statWorkers',summary.worker_nodes);
-    setText('statClusters',summary.clusters_total);setText('statNodes',Array.isArray(nodes)?nodes.length:0);
-    setText('clock',new Date(summary.server_time).toLocaleString());
-    renderClusters(clusters);renderNodes(nodes);renderTools(tools);
-  }catch(e){ console.warn(e); }
+
+    // Stats
+    setText('statVms', summary.master_nodes + summary.worker_nodes);
+    setText('statDeploying', summary.deploying);
+    setText('statClusters', summary.clusters_total);
+    setText('statNodes', Array.isArray(nodes) ? nodes.length : 0);
+
+    // Quick: SSH key
+    const ks = document.getElementById('qKeyState');
+    if (ks) {
+      ks.className = 'badge ' + (sshKey.exists ? 'badge-success' : 'badge-warning');
+      ks.textContent = sshKey.exists ? 'ada' : 'belum ada';
+    }
+
+    // Quick: tools
+    const qt = document.getElementById('qToolsState');
+    if (qt && tools) {
+      const ok = (tools.terraform?.wsl?.ok || tools.ansible?.wsl?.ok);
+      qt.className = 'badge ' + (ok ? 'badge-success' : 'badge-danger');
+      qt.textContent = ok ? 'ready' : 'missing';
+    }
+
+    // Quick: template count
+    const qt2 = document.getElementById('qTemplateCount');
+    if (qt2) qt2.textContent = (allVms.templates || []).length + ' templates';
+
+    // Quick: VM ready (running non-template)
+    const qr = document.getElementById('qVmReady');
+    if (qr) {
+      const running = (allVms.vms || []).filter(v => !v.template && v.status === 'running').length;
+      qr.className = 'badge ' + (running > 0 ? 'badge-success' : 'badge-secondary');
+      qr.textContent = running + ' ready';
+    }
+
+    // Workflow stepper
+    updateWorkflow(allVms, sshKey);
+
+    // VM table (global, non-template only)
+    renderVms(allVms);
+
+    // Cluster table
+    renderClusters(clusters);
+  } catch (e) {
+    console.warn(e);
+  }
 }
-function setText(id,v){const el=document.getElementById(id);if(el)el.textContent=v;}
-function renderClusters(clusters){
-  const tb=document.getElementById('clusterRows');
-  if(!tb)return;
-  tb.innerHTML=(clusters||[]).length?(clusters.map(clusterRow).join('')):'<tr><td colspan="5" class="text-center text-muted">No clusters yet — <a href="/new-cluster.html">create one</a>.</td></tr>';
+
+function updateWorkflow(vms, key) {
+  const hasKey = key.exists;
+  const hasTemplates = (vms.templates || []).length > 0;
+  const wf1 = document.getElementById('wf1');
+  const wf2 = document.getElementById('wf2');
+  const wf3 = document.getElementById('wf3');
+  const btnClone = document.getElementById('btnWfClone');
+  const btnConfig = document.getElementById('btnWfConfig');
+
+  if (wf1) wf1.className = 'col-md-4 wf-step' + (hasKey ? ' done' : ' active');
+  if (wf2) wf2.className = 'col-md-4 wf-step' + (hasKey && hasTemplates ? ' done' : hasKey ? ' active' : '');
+  if (wf3) wf3.className = 'col-md-4 wf-step' + (hasKey && hasTemplates ? ' done' : '');
+
+  if (btnClone) {
+    btnClone.className = 'btn btn-sm ' + (hasKey && hasTemplates ? 'btn-success' : 'btn-secondary');
+  }
+  if (btnConfig) {
+    const hasRunning = (vms.vms || []).some(v => !v.template && v.status === 'running');
+    btnConfig.className = 'btn btn-sm ' + (hasRunning ? 'btn-warning' : 'btn-secondary');
+  }
 }
-function renderNodes(nodes){
-  const tb=document.getElementById('nodeRows');
-  if(!tb)return;
-  tb.innerHTML=(nodes||[]).map(n=>{
-    const live=n.live?' <span class="badge badge-success">live</span>':' <span class="badge badge-secondary">mock</span>';
-    const mem=n.memory?Math.round(n.used_mem/1048576)+' / '+Math.round(n.memory/1048576)+' MB':'-';
-    return `<tr><td><strong>${esc(n.name)}</strong>${live}</td><td>${esc(n.status)}</td><td>${(n.cpu*100).toFixed(1)}%</td><td>${mem}</td></tr>`;
-  }).join('')||'<tr><td colspan="4" class="text-center text-muted">no nodes</td></tr>';
+
+function renderVms(data) {
+  const tb = document.getElementById('vmRows');
+  if (!tb) return;
+  const vms = (data && data.vms) || [];
+  if (!vms.length) {
+    tb.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Belum ada VM. Clone dulu di halaman Clone VM setelah koneksi SSH &amp; API Proxmox tersedia.</td></tr>';
+    return;
+  }
+  tb.innerHTML = vms.map(v => {
+    if (v.template) return '';
+    const running = (v.status || '').toLowerCase() === 'running';
+    const badgeClass = running ? 'badge-live' : 'badge-stop';
+    const cpu = ((v.cpu || 0) * 100).toFixed(1) + '% / ' + (v.cpus || '?') + 'c';
+    const mem = fmtMem(v.mem) + ' / ' + fmtMem(v.maxmem);
+    const uptime = fmtUptime(v.uptime);
+    let btns = '';
+    if (running) {
+      btns = `<button class="btn btn-sm btn-warning" onclick="vmAct(${v.vmid},'reboot',1)" title="Reboot"><i class="fas fa-redo"></i></button>
+        <button class="btn btn-sm btn-secondary ml-1" onclick="vmAct(${v.vmid},'shutdown',1)" title="Shutdown"><i class="fas fa-power-off"></i></button>
+        <button class="btn btn-sm btn-danger ml-1" onclick="vmAct(${v.vmid},'stop',1)" title="Stop"><i class="fas fa-stop"></i></button>`;
+    } else {
+      btns = `<button class="btn btn-sm btn-success" onclick="vmAct(${v.vmid},'start',0)" title="Start"><i class="fas fa-play"></i></button>`;
+    }
+    return `<tr>
+      <td><strong>${v.vmid}</strong></td>
+      <td>${esc(v.name)}</td>
+      <td><span class="badge ${badgeClass}">${esc(v.status)}</span></td>
+      <td class="small">${cpu}<br>${mem}</td>
+      <td class="small">${uptime}</td>
+      <td>${btns}</td>
+    </tr>`;
+  }).filter(Boolean).join('') || '<tr><td colspan="7" class="text-center text-muted">Semua template, tidak ada VM biasa.</td></tr>';
 }
-function renderTools(t){
-  const el=document.getElementById('toolsRow');
-  if(!el||!t)return;
-  const rt=t.runtime||{};
-  const native=rt.primary==='local';
-  const wsl=t.wsl?.available;
-  const card=(title,ok,sub)=>`<div class="col-md-3 mb-2"><div class="border rounded p-2">
-    <div><span class="rounded-circle d-inline-block ${ok?'bg-success':'bg-danger'}" style="width:10px;height:10px"></span> <strong>${title}</strong></div>
-    <div class="small text-muted">${esc(sub||'')}</div></div></div>`;
-  // Tool lokal vs WSL: tampilkan yang relevan dengan runtime (lainnya noise).
-  const tf=native?t.terraform?.local:t.terraform?.wsl;
-  const an=native?t.ansible?.local:t.ansible?.wsl;
-  const sh=native?t.ssh?.local:t.ssh?.wsl;
-  const env=native
-    ?card('Runtime',true,(rt.label||'native Linux')+' — tool lokal dipakai')
-    :card('WSL bridge',!!wsl,(t.wsl?.distros||'').split('\n').slice(0,2).join(' · ').slice(0,80));
-  el.innerHTML=
-    card('Terraform',!!tf?.ok,tf?.output)+
-    card('Ansible',!!an?.ok,an?.output)+
-    card('SSH',!!sh?.ok,sh?.output)+
-    env;
+
+function renderClusters(clusters) {
+  const tb = document.getElementById('clusterRows');
+  if (!tb) return;
+  tb.innerHTML = (clusters || []).length
+    ? clusters.map(clusterRow).join('')
+    : '<tr><td colspan="5" class="text-center text-muted">Belum ada cluster. Buat di <a href="/new-cluster.html">New Cluster</a>.</td></tr>';
 }
-document.addEventListener('DOMContentLoaded',()=>{loadDashboard();setInterval(loadDashboard,5000);});
+
+function fmtUptime(s) {
+  s = parseInt(s, 10) || 0;
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d) return d + 'd ' + (h % 24) + 'h';
+  if (h) return h + 'h ' + (m % 60) + 'm';
+  return m + 'm';
+}
+
+function fmtMem(mb) {
+  if (mb == null) return '-';
+  const m = Math.round(mb / 1048576);
+  if (m >= 1024) return (m / 1024).toFixed(1) + ' GB';
+  return m + ' MB';
+}
+
+async function vmAct(vmid, action, confirmIt) {
+  if (confirmIt && !confirm(action + ' VM ' + vmid + '?')) return;
+  try { await apiPost('/api/vms/' + vmid + '/' + action, {}); }
+  catch (e) { alert(String(e.message || e)); }
+  loadDashboard();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadDashboard();
+  setInterval(loadDashboard, 10000);
+  const btn = document.getElementById('btnVmRefresh');
+  if (btn) btn.onclick = loadDashboard;
+});

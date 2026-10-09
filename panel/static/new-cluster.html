@@ -13,8 +13,9 @@
 <a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
 <hr class="sidebar-divider my-0">
 <li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
-<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
 <li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
 <hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
 </ul>
 <div id="content-wrapper" class="d-flex flex-column"><div id="content">
@@ -69,11 +70,6 @@
 <div class="form-group col-md-2"><label>Disk GB (0 = ikut template)</label><input id="disk_size_gb" type="number" class="form-control" value="0" min="0"><small class="form-text text-muted">resize scsi0, hanya bisa membesar</small></div>
 <div class="form-group col-md-3"><label>Disk storage</label><input id="disk_storage" class="form-control" value="local-lvm"></div>
 <div class="form-group col-md-3"><label>VLAN tag (-1 = none)</label><input id="vlan_tag" type="number" class="form-control" value="-1" min="-1" max="4094"></div>
-<div class="form-group col-md-12"><label>Isi VM (fitur ansible — menentukan playbook yang dijalankan)</label>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_k8s" checked><label class="form-check-label" for="feat_k8s">Kubernetes</label></div>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_nginx" checked><label class="form-check-label" for="feat_nginx">Nginx landing</label></div>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_nodejs"><label class="form-check-label" for="feat_nodejs">Node.js LTS + pm2</label></div>
-<small class="form-text text-muted">Docker selalu terinstal via playbook common. Kosongkan semua = VM polos (hanya paket dasar).</small></div>
 </div></div></div>
 <div id="err" class="text-danger mb-2"></div>
 <button class="btn btn-primary" type="submit"><i class="fas fa-rocket"></i> Create &amp; Deploy</button>

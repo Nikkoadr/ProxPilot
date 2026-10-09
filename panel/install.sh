@@ -175,14 +175,26 @@ STATIC_DST="/usr/share/proxpilot/static"
 if [[ -d /tmp/panel-src/panel/static ]]; then
   $SUDO mkdir -p "$STATIC_DST"
   $SUDO cp -r /tmp/panel-src/panel/static/. "$STATIC_DST/"
-  rm -rf /tmp/panel-src
   echo "      static: from source checkout"
+  # Ansible repo ikut dipasang (dibaca panel saat Configure) — JANGAN hapus
+  # /tmp/panel-src dulu sebelum ini.
+  if [[ -d /tmp/panel-src/ansible ]]; then
+    $SUDO mkdir -p /usr/share/proxpilot/ansible
+    $SUDO cp -r /tmp/panel-src/ansible/. /usr/share/proxpilot/ansible/
+    echo "      ansible: from source checkout"
+  fi
+  rm -rf /tmp/panel-src
 else
   rm -rf /tmp/panel-static
   if git clone --depth 1 --branch master --filter=blob:none --sparse "$CLONE_URL" /tmp/panel-static 2>/dev/null \
-    && (cd /tmp/panel-static && git sparse-checkout set panel/static 2>/dev/null); then
+    && (cd /tmp/panel-static && git sparse-checkout set panel/static ansible 2>/dev/null); then
     $SUDO mkdir -p "$STATIC_DST"
     $SUDO cp -r /tmp/panel-static/panel/static/. "$STATIC_DST/"
+    if [[ -d /tmp/panel-static/ansible ]]; then
+      $SUDO mkdir -p /usr/share/proxpilot/ansible
+      $SUDO cp -r /tmp/panel-static/ansible/. /usr/share/proxpilot/ansible/
+      echo "      ansible: from repo ($REPO)"
+    fi
     rm -rf /tmp/panel-static
     echo "      static: from repo ($REPO)"
   else

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ProxPilot — Clone VM</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/css/custom.css" rel="stylesheet">
+</head>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">ProxPilot</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
+<li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
+<hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<span class="conn-pill"><span id="connDot" class="rounded-circle bg-secondary d-inline-block" style="width:10px;height:10px"></span> <span id="connText" class="text-muted">connecting...</span></span>
+</nav>
+<div class="container-fluid">
+<div class="d-sm-flex align-items-center justify-content-between mb-4">
+<h1 class="h3 mb-0 text-gray-800"><i class="fas fa-clone"></i> Clone VM</h1>
+<a href="/index.html" class="btn btn-sm btn-secondary">← Back</a>
+</div>
+
+<!-- Connection status -->
+<div class="card shadow mb-4" id="connCard">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Koneksi Setup</h6></div>
+<div class="card-body">
+<div class="row">
+<div class="col-md-3"><div class="border rounded p-2 text-center"><div class="small text-muted">Node</div><strong id="snNode">-</strong></div></div>
+<div class="col-md-3"><div class="border rounded p-2 text-center"><div class="small text-muted">SSH Key</div><strong id="snKey">-</strong></div></div>
+<div class="col-md-3"><div class="border rounded p-2 text-center"><div class="small text-muted">VMs Existing</div><strong id="snVms">-</strong></div></div>
+<div class="col-md-3"><div class="border rounded p-2 text-center"><div class="small text-muted">Templates</div><strong id="snTemplates">-</strong></div></div>
+</div>
+</div>
+</div>
+
+<!-- Clone form -->
+<div class="card shadow mb-4">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-plus-circle"></i> Clone Template Baru</h6></div>
+<div class="card-body">
+<form id="cloneForm">
+<div class="form-row">
+<div class="form-group col-md-4">
+<label>Template <span class="text-danger">*</span></label>
+<select id="cTemplate" class="form-control" required><option value="">loading...</option></select>
+</div>
+<div class="form-group col-md-4">
+<label>VM Name <span class="text-danger">*</span></label>
+<input id="cName" class="form-control" placeholder="my-k8s-master-0" required>
+<small class="form-text text-muted">huruf, angka, strip. Maks 63 karakter.</small>
+</div>
+<div class="form-group col-md-2">
+<label>VMID</label>
+<input id="cVmid" type="number" class="form-control" placeholder="otomatis">
+<small class="form-text text-muted">Kosong = nextid otomatis</small>
+</div>
+<div class="form-group col-md-2">
+<label>Full clone?</label>
+<select id="cFull" class="form-control">
+<option value="1">Ya (penuh)</option>
+<option value="0">Tidak (linked)</option>
+</select>
+</div>
+</div>
+<div class="form-row">
+<div class="form-group col-md-2">
+<label>CPU</label>
+<input id="cCpu" type="number" class="form-control" value="2" min="1">
+</div>
+<div class="form-group col-md-2">
+<label>RAM (MB)</label>
+<input id="cRam" type="number" class="form-control" value="4096" min="512" step="512">
+</div>
+<div class="form-group col-md-2">
+<label>Disk (GB, 0=ikut template)</label>
+<input id="cDisk" type="number" class="form-control" value="0" min="0">
+</div>
+<div class="form-group col-md-2">
+<label>Disk Storage</label>
+<input id="cDiskStorage" class="form-control" value="local-lvm">
+</div>
+<div class="form-group col-md-2">
+<label>Bridge</label>
+<input id="cBridge" class="form-control" value="vmbr0">
+</div>
+<div class="form-group col-md-2">
+<label>CI User</label>
+<input id="cCiuser" class="form-control" placeholder="ubuntu">
+</div>
+</div>
+<div class="form-row">
+<div class="form-group col-md-3">
+<label>IP Mode</label>
+<select id="cIpMode" class="form-control" onchange="toggleStatic()">
+<option value="dhcp">DHCP (otomatis)</option>
+<option value="static">Static (manual)</option>
+</select>
+</div>
+<div class="form-group col-md-3" id="cStaticIpWrap" style="display:none">
+<label>Static IP</label>
+<input id="cStaticIp" class="form-control" placeholder="192.168.1.50">
+</div>
+<div class="form-group col-md-3" id="cGatewayWrap" style="display:none">
+<label>Gateway</label>
+<input id="cGateway" class="form-control" placeholder="192.168.1.1">
+</div>
+<div class="form-group col-md-3">
+<label>DNS Server</label>
+<input id="cDns" class="form-control" value="8.8.8.8">
+</div>
+</div>
+<div class="custom-control custom-checkbox mb-2">
+<input type="checkbox" class="custom-control-input" id="cStart" checked>
+<label class="custom-control-label" for="cStart">Start VM setelah clone</label>
+</div>
+<div id="cErr" class="text-danger mb-2"></div>
+<button class="btn btn-primary" type="submit" id="btnClone"><i class="fas fa-clone"></i> Clone VM</button>
+</form>
+</div>
+</div>
+
+<!-- Clone result -->
+<div class="card shadow mb-4" id="resultCard" style="display:none">
+<div class="card-header py-3"><h6 class="m-0 font-weight-bold" id="resultTitle">Hasil Clone</h6></div>
+<div class="card-body" id="resultBody"></div>
+</div>
+
+<!-- VM List -->
+<div class="card shadow mb-4">
+<div class="card-header py-3 d-flex justify-content-between align-items-center">
+<h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-list"></i> Semua VM di Node</h6>
+<button id="btnRefresh" class="btn btn-sm btn-outline-secondary"><i class="fas fa-sync"></i> Refresh</button>
+</div>
+<div class="card-body">
+<div class="table-responsive">
+<table class="table table-bordered table-hover">
+<thead><tr><th>VMID</th><th>Nama</th><th>Status</th><th>CPU</th><th>Memory</th><th>Uptime</th><th>Aksi</th></tr></thead>
+<tbody id="vmRows"><tr><td colspan="7" class="text-center text-muted">loading...</td></tr></tbody>
+</table>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>ProxPilot · Clone VM langsung via Proxmox API</span></div></div></footer>
+</div></div>
+<a class="scroll-to-top rounded" href="#page-top"><i class="fas fa-angle-up"></i></a>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/4.6.3/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/js/sb-admin-2.min.js"></script>
+<script src="/js/app.js"></script>
+<script src="/js/clone-vm.js"></script>
+</body>
+</html>

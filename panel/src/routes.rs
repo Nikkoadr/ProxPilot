@@ -1,7 +1,7 @@
 use crate::exec;
 use crate::models::{Cluster, ProxmoxTestRequest, SshCopyIdRequest, SshTestRequest, TemplateOption};
 use crate::proxmox::{self, ProxmoxCreds};
-use crate::store::AppState;
+use crate::store::{AppState, IntoCreds};
 use axum::{
     extract::{Path, Query, State, WebSocketUpgrade},
     http::StatusCode,
@@ -15,21 +15,43 @@ use std::collections::HashMap;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        // ---- clusters ----
         .route("/api/clusters", get(list_clusters).post(create_cluster))
         .route("/api/clusters/:id", delete(delete_cluster).put(update_cluster))
         .route("/api/clusters/:id/status", get(cluster_status))
         .route("/api/clusters/:id/deploy", post(deploy_cluster))
+        .route("/api/clusters/:id/destroy", post(destroy_cluster))
+        .route("/api/clusters/:id/plan", post(plan_cluster))
+        .route("/api/clusters/:id/preflight", post(preflight))
         .route("/api/clusters/:id/refresh-ips", post(refresh_ips))
+        .route("/api/clusters/:id/vms", get(cluster_vms))
+        .route("/api/clusters/:id/vms/:vmid/:action", post(vm_action))
+        // ---- setup / config ----
+        .route("/api/setup", get(get_setup).put(put_setup))
+        .route("/api/config", get(get_config))
+        // ---- VM clone (direct Proxmox API) ----
+        .route("/api/vms", get(list_all_vms))
+        .route("/api/vms/clone", post(clone_vm))
+        .route("/api/vms/:vmid", delete(delete_vm))
+        .route("/api/vms/:vmid/ip", get(vm_ip_addr))
+        .route("/api/vms/:vmid/:action", post(vm_power))
+        // ---- configure (ansible) ----
+        .route("/api/configure/templates", get(config_templates))
+        .route("/api/configure", post(configure_run))
+        .route("/api/configure/runs/:id", get(configure_status))
+        // ---- nodes / templates ----
         .route("/api/nodes", get(list_nodes))
         .route("/api/templates", get(list_templates))
-        .route("/api/config", get(get_config))
+        // ---- health / tools / realtime ----
         .route("/api/tools", get(tools))
         .route("/api/realtime/summary", get(summary))
         .route("/api/health/proxmox-test", post(proxmox_test))
+        // ---- SSH (from any host: WSL or native) ----
         .route("/api/ssh/test", post(ssh_test))
         .route("/api/ssh/key", get(ssh_key))
         .route("/api/ssh/keygen", post(ssh_keygen))
         .route("/api/ssh/copy-id", post(ssh_copy_id))
+        // ---- websocket ----
         .route("/api/ws/logs/:id", get(ws_logs))
         .with_state(state)
 }
@@ -169,7 +191,15 @@ async fn update_cluster(
     }
     cur.updated_at = chrono::Utc::now();
     s.db.save_cluster(&cur);
-    s.push_log(&id, "provision", "Connection settings updated. Re-deploy to apply.", "info");
+    // Fitur (isi VM) bisa berubah tanpa deploy — tulis ulang run-ansible.sh
+    // agar menu Configure + file selalu sinkron. Terraform lain butuh deploy.
+    let dir = format!("{}/terraform/{}", s.infra_dir, cur.id);
+    if std::fs::create_dir_all(&dir).is_ok() {
+        if let Err(e) = write_run_ansible(&dir, &cur) {
+            s.push_log(&id, "provision", &format!("WARNING: run-ansible.sh gagal ditulis ulang ({e})"), "warning");
+        }
+    }
+    s.push_log(&id, "provision", "Connection settings updated. Re-deploy to apply (kecuali fitur: langsung berlaku di menu Configure).", "info");
     (StatusCode::OK, Json(cur.masked())).into_response()
 }
 
@@ -177,12 +207,174 @@ async fn deploy_cluster(State(s): State<AppState>, Path(id): Path<String>) -> im
     if !s.cluster_exists(&id) {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"})));
     }
+    if !s.try_begin_op(&id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "another terraform operation is already running for this cluster"})),
+        );
+    }
     let bg = s.clone();
     let id2 = id.clone();
     tokio::spawn(async move {
-        run_deployment(bg, &id2).await;
+        run_deployment(bg.clone(), &id2).await;
+        bg.end_op(&id2);
     });
     (StatusCode::OK, Json(json!({"message": "deployment started", "id": id})))
+}
+
+/// POST /api/clusters/:id/destroy — hapus SEMUA VM via
+/// `terraform destroy -auto-approve`. Definisi cluster (DB) tetap tersimpan
+/// sehingga bisa Deploy ulang. Status kembali `pending`, IP dibersihkan.
+async fn destroy_cluster(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    if !s.cluster_exists(&id) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"})));
+    }
+    if !s.try_begin_op(&id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "another terraform operation is already running for this cluster"})),
+        );
+    }
+    let bg = s.clone();
+    let id2 = id.clone();
+    tokio::spawn(async move {
+        run_destroy(bg.clone(), &id2).await;
+        bg.end_op(&id2);
+    });
+    (StatusCode::OK, Json(json!({"message": "destroy started", "id": id})))
+}
+
+/// POST /api/clusters/:id/plan — `terraform init + plan` tanpa apply.
+/// Read-only terhadap infra (tidak membuat/menghapus VM). Async seperti
+/// deploy: hasilnya mengalir ke log fase `plan`. Ditolak (409) bila ada
+/// op terraform lain berjalan untuk cluster ini.
+async fn plan_cluster(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    if !s.cluster_exists(&id) {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"})));
+    }
+    if !s.try_begin_op(&id) {
+        return (
+            StatusCode::CONFLICT,
+            Json(json!({"error": "another terraform operation is already running for this cluster"})),
+        );
+    }
+    let bg = s.clone();
+    let id2 = id.clone();
+    tokio::spawn(async move {
+        run_plan(bg.clone(), &id2).await;
+        bg.end_op(&id2);
+    });
+    (StatusCode::OK, Json(json!({"message": "plan started", "id": id})))
+}
+
+// ---------- preflight (cek kesiapan, tanpa mengubah apa pun) ----------
+
+/// POST /api/clusters/:id/preflight — cek berurutan sebelum Deploy:
+/// API Proxmox nyambung? template cloud-init ADA? terraform ada?
+/// (remote: ssh nyambung?) + sanity mode IP. Read-only: tidak mengubah
+/// status, tidak menulis file, tidak membuat VM.
+async fn preflight(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let cluster = match s.db.get_cluster(&id) {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"}))).into_response(),
+    };
+    let mut checks: Vec<serde_json::Value> = vec![];
+    let mut check = |name: &str, ok: bool, detail: String| {
+        checks.push(json!({"name": name, "ok": ok, "detail": detail}));
+    };
+
+    // 1. API Proxmox (dari host panel — jalur yang sama dipakai deploy).
+    let creds = cluster.into_creds();
+    let api = proxmox::test_connection(&creds).await;
+    let api_ok = api.get("ok").and_then(|x| x.as_bool()).unwrap_or(false);
+    check(
+        "proxmox_api",
+        api_ok,
+        if api_ok {
+            format!(
+                "OK (versi {}, {} ms)",
+                api.get("version").and_then(|x| x.as_str()).unwrap_or("?"),
+                api.get("latency_ms").and_then(|x| x.as_u64()).unwrap_or(0)
+            )
+        } else {
+            api.get("error").and_then(|x| x.as_str()).unwrap_or("unreachable").to_string()
+        },
+    );
+
+    // 2. Template cloud-init ADA di node target? (penyebab gagal apply paling konyol)
+    if api_ok {
+        match proxmox::list_vms(&creds, &cluster.target_node).await {
+            Ok(all) => {
+                let found = all.iter().any(|v| v.template && v.name == cluster.clone_template);
+                check(
+                    "template",
+                    found,
+                    if found {
+                        format!("{} ada di node {}", cluster.clone_template, cluster.target_node)
+                    } else {
+                        format!(
+                            "TIDAK ADA: '{}' tidak ditemukan di node {}. Buat template dulu.",
+                            cluster.clone_template, cluster.target_node
+                        )
+                    },
+                );
+            }
+            Err(e) => check("template", false, format!("gagal list VM: {e}")),
+        }
+    } else {
+        check("template", false, "skip (API gagal)".to_string());
+    }
+
+    // 3. Terraform + (remote: SSH) di jalur eksekusi yang akan dipakai deploy.
+    let use_remote = !cluster.ssh_host.trim().is_empty();
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available).await.unwrap_or(false);
+    if use_remote {
+        let (h, u, p) = (cluster.ssh_host.clone(), cluster.ssh_remote_user_or_default(), cluster.ssh_port);
+        let ssh = tokio::task::spawn_blocking(move || exec::ssh_test_auto(&h, &u, p, via_wsl))
+            .await
+            .unwrap_or(exec::CmdResult { ok: false, output: "ssh task gagal".into(), ms: 0 });
+        check("ssh", ssh.ok, truncate(&ssh.output, 300));
+        if ssh.ok {
+            let (h2, u2) = (cluster.ssh_host.clone(), cluster.ssh_remote_user_or_default());
+            let tf = tokio::task::spawn_blocking(move || {
+                exec::ssh_exec_auto(&h2, &u2, p, "terraform version 2>&1 | head -1", via_wsl)
+            })
+            .await
+            .unwrap_or(exec::CmdResult { ok: false, output: "task gagal".into(), ms: 0 });
+            check("terraform", tf.ok, truncate(&tf.output, 200));
+        } else {
+            check("terraform", false, "skip (SSH gagal)".to_string());
+        }
+    } else {
+        check("ssh", true, "skip (local mode)".to_string());
+        let tf = tokio::task::spawn_blocking(move || {
+            if via_wsl {
+                exec::tool_version_wsl("terraform")
+            } else {
+                exec::tool_version_local("terraform")
+            }
+        })
+        .await
+        .unwrap_or(exec::CmdResult { ok: false, output: "task gagal".into(), ms: 0 });
+        check("terraform", tf.ok, truncate(&tf.output.lines().next().unwrap_or("").to_string(), 200));
+    }
+
+    // 4. Sanity mode IP statik.
+    if cluster.ip_mode == "static" {
+        match static_ips_for_cluster(&cluster) {
+            Some((m, w)) => check(
+                "static_ip",
+                true,
+                format!("master [{}] worker [{}]", m.join(", "), w.join(", ")),
+            ),
+            None => check("static_ip", false, "static_ip_base invalid / blok lewat .254".to_string()),
+        }
+    } else {
+        check("static_ip", true, "skip (DHCP)".to_string());
+    }
+
+    let ok = checks.iter().all(|c| c.get("ok").and_then(|x| x.as_bool()).unwrap_or(false));
+    (StatusCode::OK, Json(json!({"ok": ok, "checks": checks}))).into_response()
 }
 
 // ---------- nodes / templates / config ----------
@@ -190,6 +382,7 @@ async fn deploy_cluster(State(s): State<AppState>, Path(id): Path<String>) -> im
 #[derive(Debug, Deserialize)]
 struct NodesQuery {
     cluster_id: Option<String>,
+    node: Option<String>,
 }
 
 async fn list_nodes(State(s): State<AppState>, Query(q): Query<NodesQuery>) -> Json<Value> {
@@ -210,14 +403,15 @@ async fn list_nodes(State(s): State<AppState>, Query(q): Query<NodesQuery>) -> J
     Json(json!(proxmox::mock_nodes()))
 }
 
-async fn list_templates() -> Json<Value> {
-    Json(json!([
+/// Fallback template statis bila Setup/API belum bisa (dipakai list_templates).
+fn static_templates() -> Value {
+    json!([
         {"name": "ubuntu-22-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 22.04 LTS Cloud-Init"},
         {"name": "ubuntu-24-04-cloudinit", "storage": "local", "size": "4GB", "description": "Ubuntu 24.04 LTS Cloud-Init"},
         {"name": "debian-12-cloudinit", "storage": "local", "size": "3GB", "description": "Debian 12 Cloud-Init"},
         {"name": "rocky-9-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 9 Cloud-Init (user: rocky)"},
         {"name": "rocky-8-cloudinit", "storage": "local", "size": "4GB", "description": "Rocky Linux 8 Cloud-Init (user: rocky)"},
-    ]))
+    ])
 }
 
 async fn get_config() -> Json<Value> {
@@ -545,12 +739,7 @@ async fn run_deployment(state: AppState, id: &str) {
     state.push_log(&id, "provision", "Generating Terraform configuration...", "info");
     // Ambil public key SSH host panel untuk diinject via cloud-init
     // (ciuser+sshkeys) — ansible selalu bisa login ke VM hasil clone.
-    let panel_key: Option<String> = tokio::task::spawn_blocking(|| {
-        let via_wsl = exec::wsl_available();
-        exec::ssh_pubkey_get(via_wsl)
-    })
-    .await
-    .unwrap_or(None);
+    let panel_key = panel_ssh_key().await;
     if panel_key.is_none() {
         state.push_log(
             &id,
@@ -657,14 +846,16 @@ async fn run_deployment(state: AppState, id: &str) {
     state.push_log(&id, "provision", "Terraform apply succeeded — VMs are provisioned.", "info");
     let inv = format!("{}/terraform/{}/inventory.ini", state.infra_dir, cluster.id);
     let runner = format!("{}/terraform/{}/run-ansible.sh", state.infra_dir, cluster.id);
-    let mut msg = format!(
-        "Next: isi VM dengan ansible sesuai fitur [{}] (dari repo root), atau jalankan {runner}:\n",
-        if cluster.enabled_features.is_empty() { "common only".to_string() } else { cluster.enabled_features.join(",") },
+    // Terraform selesai di sini. Isi VM (ansible) langkah terpisah di menu Configure.
+    state.push_log(
+        &id,
+        "ansible",
+        &format!(
+            "VMs ready (kosong sesuai template — isi via menu Configure). inventory: {inv}\nNext: buka menu Configure (/configure.html?id={}) untuk memilih isi VM, atau jalankan {runner} dari repo root.",
+            cluster.id
+        ),
+        "info",
     );
-    for (pb, desc) in ansible_steps(&cluster) {
-        msg.push_str(&format!("  ansible-playbook -i \"{inv}\" ansible/{pb}   # {desc}\n"));
-    }
-    state.push_log(&id, "k8s", &msg, "info");
 
     state.set_simulated(&id, false);
     state.set_status(&id, "running", 100);
@@ -895,6 +1086,358 @@ async fn remote_path(state: &AppState, id: &str, cluster: &Cluster) -> bool {
     }
 }
 
+// ---------- destroy engine ----------
+
+async fn run_destroy(state: AppState, id: &str) {
+    let cluster = match state.db.get_cluster(id) {
+        Some(s) => s,
+        None => return,
+    };
+    let id = id.to_string();
+    state.set_status(&id, "deploying", 5);
+    state.push_log(&id, "destroy", "Destroying VMs with `terraform destroy -auto-approve` ...", "info");
+    let use_remote = !cluster.ssh_host.trim().is_empty();
+    let destroyed = if use_remote {
+        remote_destroy(&state, &id, &cluster).await
+    } else {
+        local_destroy(&state, &id, &cluster).await
+    };
+    if !destroyed {
+        state.set_status(&id, "error", 5);
+        state.push_log(&id, "destroy", "Destroy FAILED — lihat error di atas. Sebagian VM mungkin masih ada di Proxmox; cek manual.", "error");
+        return;
+    }
+    // Bersihkan IP simpanan (inventory kembali placeholder), status ke pending.
+    // Definisi cluster tetap ada — siap Deploy ulang kapan saja.
+    save_discovered_ips(&state, &id, vec![], vec![]);
+    state.set_simulated(&id, false);
+    state.set_status(&id, "pending", 0);
+    state.push_log(&id, "destroy", "Destroy complete — semua VM dihapus. Definisi cluster tersimpan, siap Deploy ulang.", "info");
+}
+
+/// `terraform destroy` di host ini (native / WSL bridge).
+async fn local_destroy(state: &AppState, id: &str, cluster: &Cluster) -> bool {
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    let dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
+    state.set_status(id, "deploying", 20);
+    if !via_wsl {
+        state.push_log(id, "destroy", "Exec: terraform destroy -auto-approve -input=false (native)...", "info");
+        let dir2 = dir.clone();
+        let out = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("terraform")
+                .args(["destroy", "-auto-approve", "-input=false"])
+                .current_dir(&dir2)
+                .output()
+        })
+        .await;
+        return destroy_output_done(state, id, out);
+    }
+    let dir_wsl = win_to_wsl(&dir);
+    let cmd = format!(
+        "cd \"{}\" && terraform destroy -auto-approve -input=false 2>&1 | tail -30",
+        dir_wsl.replace('"', "\\\"")
+    );
+    state.push_log(id, "destroy", "Exec (wsl): terraform destroy...", "info");
+    match tokio::task::spawn_blocking(move || exec::run_in_wsl(&cmd)).await {
+        Ok(r) => {
+            let no_state = r.output.contains("No state");
+            let ok = r.ok || no_state;
+            state.push_log(
+                id,
+                "destroy",
+                &format!("terraform destroy ok={ok}:\n{}", truncate(&r.output, 2000)),
+                if ok { "info" } else { "error" },
+            );
+            ok
+        }
+        Err(e) => {
+            state.push_log(id, "destroy", &format!("Exec failed: {e}"), "error");
+            false
+        }
+    }
+}
+
+/// `terraform destroy` di server Proxmox via ssh (remote mode).
+async fn remote_destroy(state: &AppState, id: &str, cluster: &Cluster) -> bool {
+    let host = cluster.ssh_host.clone();
+    let user = cluster.ssh_remote_user_or_default();
+    let port = cluster.ssh_port;
+    let remote_dir = format!("/tmp/proxpilot/{}", cluster.id);
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    state.set_status(id, "deploying", 20);
+    state.push_log(id, "destroy", &format!("Exec (remote): terraform destroy di {user}@{host}:{remote_dir} ..."), "info");
+    let (h, u) = (host.clone(), user.clone());
+    match tokio::task::spawn_blocking(move || {
+        exec::ssh_exec_auto(
+            &h,
+            &u,
+            port,
+            &format!("cd '{remote_dir}' && terraform destroy -auto-approve -input=false 2>&1 | tail -30"),
+            via_wsl,
+        )
+    })
+    .await
+    {
+        Ok(res) => {
+            let no_state = res.output.contains("No state");
+            let ok = res.ok || no_state;
+            state.push_log(
+                id,
+                "destroy",
+                &format!("Remote terraform destroy ok={ok} ({} ms):\n{}", res.ms, truncate(&res.output, 2000)),
+                if ok { "info" } else { "error" },
+            );
+            ok
+        }
+        Err(e) => {
+            state.push_log(id, "destroy", &format!("Remote destroy task failed: {e}"), "error");
+            false
+        }
+    }
+}
+
+/// Public key SSH host panel (None bila belum Generate di Health).
+/// Dijalankan di thread blocking karena mem-spawn proses eksternal.
+async fn panel_ssh_key() -> Option<String> {
+    tokio::task::spawn_blocking(|| {
+        let via_wsl = exec::wsl_available();
+        exec::ssh_pubkey_get(via_wsl)
+    })
+    .await
+    .unwrap_or(None)
+}
+
+// ---------- plan engine (preview tanpa apply) ----------
+
+async fn run_plan(state: AppState, id: &str) {
+    let cluster = match state.db.get_cluster(id) {
+        Some(s) => s,
+        None => return,
+    };
+    let id = id.to_string();
+    state.push_log(&id, "plan", "Plan preview: generate files + `terraform init + plan` (TIDAK ada yang diterapkan)...", "info");
+    let panel_key = panel_ssh_key().await;
+    if let Err(e) = write_terraform(&state.infra_dir, &cluster, panel_key.as_deref()) {
+        state.push_log(&id, "plan", &format!("Failed to write terraform files: {e}"), "error");
+        return;
+    }
+    let use_remote = !cluster.ssh_host.trim().is_empty();
+    if use_remote {
+        remote_plan(&state, &id, &cluster).await;
+    } else {
+        local_plan(&state, &id, &cluster).await;
+    }
+    state.push_log(&id, "plan", "Plan finished — tidak ada perubahan yang diterapkan. Klik Deploy untuk eksekusi.", "info");
+}
+
+/// Ringkasan satu baris `Plan: X to add, ...` dari output (None bila tak ada).
+fn plan_summary(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("Plan:"))
+        .map(|l| l.to_string())
+}
+
+/// `terraform init + plan` di host ini (native / WSL bridge).
+async fn local_plan(state: &AppState, id: &str, cluster: &Cluster) {
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    let dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
+    if !via_wsl {
+        for (step, args) in [
+            ("init", vec!["init", "-input=false"]),
+            ("plan", vec!["plan", "-input=false", "-no-color"]),
+        ] {
+            state.push_log(id, "plan", &format!("Exec: terraform {step} (native)..."), "info");
+            let dir2 = dir.clone();
+            let out = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("terraform")
+                    .args(&args)
+                    .current_dir(&dir2)
+                    .output()
+            })
+            .await;
+            match out {
+                Ok(Ok(o)) => {
+                    let txt = format!(
+                        "{}\n[stderr]\n{}",
+                        String::from_utf8_lossy(&o.stdout),
+                        String::from_utf8_lossy(&o.stderr)
+                    );
+                    let ok = o.status.success();
+                    state.push_log(
+                        id,
+                        "plan",
+                        &format!("terraform {step} ok={ok}:\n{}", truncate(&txt, 2500)),
+                        if ok { "info" } else { "error" },
+                    );
+                    if !ok {
+                        return;
+                    }
+                    if step == "plan" {
+                        if let Some(sum) = plan_summary(&txt) {
+                            state.push_log(id, "plan", &format!("Ringkasan: {sum}"), "info");
+                        }
+                    }
+                }
+                _ => {
+                    state.push_log(id, "plan", &format!("terraform {step} (native) gagal dijalankan."), "error");
+                    return;
+                }
+            }
+        }
+        return;
+    }
+    let dir_wsl = win_to_wsl(&dir);
+    let cmd = format!(
+        "cd \"{}\" && terraform init -input=false 2>&1 | tail -5 && terraform plan -input=false -no-color 2>&1 | tail -60",
+        dir_wsl.replace('"', "\\\"")
+    );
+    state.push_log(id, "plan", "Exec (wsl): terraform init + plan...", "info");
+    match tokio::task::spawn_blocking(move || exec::run_in_wsl(&cmd)).await {
+        Ok(r) => {
+            state.push_log(
+                id,
+                "plan",
+                &format!("terraform init+plan ok={}:\n{}", r.ok, truncate(&r.output, 2500)),
+                if r.ok { "info" } else { "error" },
+            );
+            if r.ok {
+                if let Some(sum) = plan_summary(&r.output) {
+                    state.push_log(id, "plan", &format!("Ringkasan: {sum}"), "info");
+                }
+            }
+        }
+        Err(e) => {
+            state.push_log(id, "plan", &format!("Exec failed: {e}"), "error");
+        }
+    }
+}
+
+/// `terraform init + plan` di server Proxmox via ssh (remote mode).
+/// File di-sync dulu (mkdir + scp), sama seperti deploy.
+async fn remote_plan(state: &AppState, id: &str, cluster: &Cluster) {
+    let host = cluster.ssh_host.clone();
+    let user = cluster.ssh_remote_user_or_default();
+    let port = cluster.ssh_port;
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available)
+        .await
+        .unwrap_or(false);
+    let remote_dir = match remote_sync(state, id, cluster, "plan", via_wsl, &host, &user, port).await {
+        Some(d) => d,
+        None => return,
+    };
+    state.push_log(id, "plan", "Exec (remote): terraform init + plan ...", "info");
+    let (h, u) = (host.clone(), user.clone());
+    match tokio::task::spawn_blocking(move || {
+        exec::ssh_exec_auto(
+            &h,
+            &u,
+            port,
+            &format!("cd '{remote_dir}' && terraform init -input=false 2>&1 | tail -5 && terraform plan -input=false -no-color 2>&1 | tail -60"),
+            via_wsl,
+        )
+    })
+    .await
+    {
+        Ok(res) => {
+            state.push_log(
+                id,
+                "plan",
+                &format!("Remote terraform plan ok={} ({} ms):\n{}", res.ok, res.ms, truncate(&res.output, 2500)),
+                if res.ok { "info" } else { "error" },
+            );
+            if res.ok {
+                if let Some(sum) = plan_summary(&res.output) {
+                    state.push_log(id, "plan", &format!("Ringkasan: {sum}"), "info");
+                }
+            }
+        }
+        Err(e) => {
+            state.push_log(id, "plan", &format!("Remote plan task failed: {e}"), "error");
+        }
+    }
+}
+
+/// mkdir + scp file cluster ke server. Returns remote_dir bila sukses.
+/// (remote_path punya alur serupa inline; helper ini untuk plan agar mandiri.)
+async fn remote_sync(
+    state: &AppState,
+    id: &str,
+    cluster: &Cluster,
+    phase: &str,
+    via_wsl: bool,
+    host: &str,
+    user: &str,
+    port: u16,
+) -> Option<String> {
+    let local_dir = format!("{}/terraform/{}", state.infra_dir, cluster.id);
+    let scp_src = if via_wsl { win_to_wsl(&local_dir) } else { local_dir.clone() };
+    let remote_dir = format!("/tmp/proxpilot/{}", cluster.id);
+    state.push_log(id, phase, &format!("Sync: scp -r -> {user}@{host}:{remote_dir} ..."), "info");
+    let (h, u, d) = (host.to_string(), user.to_string(), remote_dir.clone());
+    let mkdir = tokio::task::spawn_blocking(move || {
+        exec::ssh_exec_auto(&h, &u, port, &format!("mkdir -p '{remote_dir_s}'", remote_dir_s = d.replace('\'', "'\\''")), via_wsl)
+    })
+    .await;
+    if !matches!(mkdir, Ok(ref r) if r.ok) {
+        state.push_log(id, phase, "Remote mkdir failed — aborting.", "error");
+        return None;
+    }
+    let (h2, u2) = (host.to_string(), user.to_string());
+    let scp_dst = format!("{remote_dir}/");
+    match tokio::task::spawn_blocking(move || exec::scp_to_remote(&h2, &u2, port, &scp_src, &scp_dst, via_wsl)).await {
+        Ok(res) if res.ok => {
+            state.push_log(id, phase, "Sync OK.", "info");
+            Some(remote_dir)
+        }
+        Ok(res) => {
+            state.push_log(id, phase, &format!("Sync (scp) FAILED:\n{}", truncate(&res.output, 1200)), "error");
+            None
+        }
+        Err(e) => {
+            state.push_log(id, phase, &format!("Sync task failed: {e}"), "error");
+            None
+        }
+    }
+}
+fn destroy_output_done(
+    state: &AppState,
+    id: &str,
+    out: Result<Result<std::process::Output, std::io::Error>, tokio::task::JoinError>,
+) -> bool {
+    let out = match out {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
+            state.push_log(id, "destroy", &format!("terraform destroy gagal dijalankan: {e}"), "error");
+            return false;
+        }
+        Err(e) => {
+            state.push_log(id, "destroy", &format!("terraform destroy task gagal: {e}"), "error");
+            return false;
+        }
+    };
+    let txt = format!(
+        "{}\n[stderr]\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ok = out.status.success() || txt.contains("No state");
+    state.push_log(
+        id,
+        "destroy",
+        &format!("terraform destroy ok={ok}:\n{}", truncate(&txt, 2000)),
+        if ok { "info" } else { "error" },
+    );
+    ok
+}
+
 // ---------- terraform filegen ----------
 
 /// Generate file terraform per cluster. `panel_key` = public key SSH host
@@ -927,33 +1470,40 @@ fn write_terraform(infra_dir: &str, c: &Cluster, panel_key: Option<&str>) -> std
                 .join(", ")
         )
     };
-    let vars = format!(
-        "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\nmaster_ipconfigs = {}\nworker_ipconfigs = {}\nname_prefix = \"{}\"\nciuser = {}\nsshkeys = {}\ndisk_size_gb = {}\ndisk_storage = \"{}\"\nvlan_tag = {}\n",
-        hcl_escape(&c.proxmox_url),
-        hcl_escape(&c.proxmox_user),
-        hcl_escape(&c.token_id),
-        hcl_escape(&c.token_secret),
-        hcl_escape(&c.target_node),
-        hcl_escape(&c.clone_template),
-        hcl_escape(&c.network_bridge),
-        hcl_escape(&c.gateway),
-        hcl_escape(&c.dns1),
-        hcl_escape(&c.ssh_user),
-        c.master_count,
-        c.worker_count,
-        c.master_cpu,
-        c.master_ram,
-        c.worker_cpu,
-        c.worker_ram,
-        hcl_list(&master_cfg),
-        hcl_list(&worker_cfg),
-        hcl_escape(&prefix),
-        hcl_str_or_null(Some(vm_ssh_user(c))),
-        hcl_str_or_null(panel_key),
-        c.disk_size_gb,
-        hcl_escape(&c.disk_storage),
-        c.vlan_tag,
-    );
+    // Pasangan key=value diratakan seperti `terraform fmt` (lebar = key terpanjang).
+    let pairs: Vec<(&str, String)> = vec![
+        ("proxmox_api_url", format!("\"{}\"", hcl_escape(&c.proxmox_url))),
+        (
+            "proxmox_user",
+            format!("\"{}:{}\"", hcl_escape(&c.proxmox_user), hcl_escape(&c.token_id)),
+        ),
+        ("proxmox_token", format!("\"{}\"", hcl_escape(&c.token_secret))),
+        ("target_node", format!("\"{}\"", hcl_escape(&c.target_node))),
+        ("clone_template", format!("\"{}\"", hcl_escape(&c.clone_template))),
+        ("network_bridge", format!("\"{}\"", hcl_escape(&c.network_bridge))),
+        ("gateway", format!("\"{}\"", hcl_escape(&c.gateway))),
+        ("dns1", format!("\"{}\"", hcl_escape(&c.dns1))),
+        ("ssh_user", format!("\"{}\"", hcl_escape(&c.ssh_user))),
+        ("master_count", c.master_count.to_string()),
+        ("worker_count", c.worker_count.to_string()),
+        ("master_cpu", c.master_cpu.to_string()),
+        ("master_ram", c.master_ram.to_string()),
+        ("worker_cpu", c.worker_cpu.to_string()),
+        ("worker_ram", c.worker_ram.to_string()),
+        ("master_ipconfigs", hcl_list(&master_cfg)),
+        ("worker_ipconfigs", hcl_list(&worker_cfg)),
+        ("name_prefix", format!("\"{}\"", hcl_escape(&prefix))),
+        ("ciuser", hcl_str_or_null(Some(vm_ssh_user(c)))),
+        ("sshkeys", hcl_str_or_null(panel_key)),
+        ("disk_size_gb", c.disk_size_gb.to_string()),
+        ("disk_storage", format!("\"{}\"", hcl_escape(&c.disk_storage))),
+        ("vlan_tag", c.vlan_tag.to_string()),
+    ];
+    let width = pairs.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+    let mut vars = String::new();
+    for (k, v) in &pairs {
+        vars.push_str(&format!("{k:<width$} = {v}\n", width = width));
+    }
     let tfvars = format!("{dir}/terraform.tfvars");
     std::fs::write(&tfvars, vars)?;
     #[cfg(unix)]
@@ -995,9 +1545,16 @@ fn write_terraform(infra_dir: &str, c: &Cluster, panel_key: Option<&str>) -> std
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
     }
-    // run-ansible.sh: pengisi VM sekali klik sesuai fitur cluster.
+    // run-ansible.sh: pengisi VM sesuai fitur cluster (menu Configure).
     // Dijalankan dari repo root (atau set ANSIBLE_DIR=<path folder ansible/>).
     // File ini ikut ter-sync ke server pada remote mode (scp -r seluruh dir).
+    // Ditulis ulang juga tiap PUT /api/clusters/:id (ganti fitur tanpa deploy).
+    write_run_ansible(&dir, c)?;
+    Ok(())
+}
+
+/// Tulis (ulang) run-ansible.sh sesuai fitur cluster saat ini.
+fn write_run_ansible(dir: &str, c: &Cluster) -> std::io::Result<()> {
     let mut run = format!(
         "#!/usr/bin/env bash\n# Generated by proxpilot for cluster '{}' ({})\n# Isi VM sesuai fitur: {}\n# Usage: ./run-ansible.sh   (dari repo root; butuh ansible terinstal)\nset -euo pipefail\nINV=\"$(dirname \"$0\")/inventory.ini\"\nANSIBLE_DIR=\"${{ANSIBLE_DIR:-ansible}}\"\n",
         c.name,
@@ -1244,6 +1801,610 @@ async fn refresh_ips(State(s): State<AppState>, Path(id): Path<String>) -> impl 
     (StatusCode::OK, Json(json!({"ok": true, "master_ips": masters, "worker_ips": workers}))).into_response()
 }
 
+// ---------- live VMs (Proxmox API, filter prefix nama cluster) ----------
+
+/// GET /api/clusters/:id/vms — VM milik cluster ini (live dari Proxmox).
+async fn cluster_vms(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    let cluster = match s.db.get_cluster(&id) {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"}))).into_response(),
+    };
+    if cluster.token_secret.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "cluster has no API token"}))).into_response();
+    }
+    let creds = cluster.into_creds();
+    let prefix = vm_prefix(&cluster);
+    match proxmox::list_vms(&creds, &cluster.target_node).await {
+        Ok(all) => {
+            let mine: Vec<_> = all
+                .into_iter()
+                .filter(|v| !v.template && v.name.starts_with(&prefix))
+                .collect();
+            (StatusCode::OK, Json(json!({"ok": true, "vms": mine}))).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"ok": false, "error": e})),
+        )
+            .into_response(),
+    }
+}
+
+/// POST /api/clusters/:id/vms/:vmid/:action — start|shutdown|reboot|stop.
+/// VMID harus milik cluster ini (cek prefix nama) agar tidak salah sasaran.
+async fn vm_action(
+    State(s): State<AppState>,
+    Path((id, vmid_raw, action)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    const ALLOWED: &[&str] = &["start", "shutdown", "reboot", "stop"];
+    if !ALLOWED.contains(&action.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "action must be one of: start, shutdown, reboot, stop"})),
+        )
+            .into_response();
+    }
+    let vmid: u64 = match vmid_raw.parse() {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid vmid"}))).into_response(),
+    };
+    let cluster = match s.db.get_cluster(&id) {
+        Some(c) => c,
+        None => return (StatusCode::NOT_FOUND, Json(json!({"error": "cluster not found"}))).into_response(),
+    };
+    let creds = cluster.into_creds();
+    let prefix = vm_prefix(&cluster);
+    // Resolve nama dulu: pastikan VMID memang milik cluster ini.
+    let name = match proxmox::list_vms(&creds, &cluster.target_node).await {
+        Ok(all) => match all.into_iter().find(|v| v.vmid == vmid) {
+            Some(v) if !v.template && v.name.starts_with(&prefix) => v.name,
+            _ => {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": "vmid is not part of this cluster"})),
+                )
+                    .into_response()
+            }
+        },
+        Err(e) => {
+            return (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response();
+        }
+    };
+    match proxmox::vm_power(&creds, &cluster.target_node, vmid, &action).await {
+        Ok(task) => {
+            s.push_log(&id, "power", &format!("{action} {name} (vmid {vmid}): task {task}"), "info");
+            (StatusCode::OK, Json(json!({"ok": true, "task": task}))).into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+// ---------- setup: koneksi Proxmox+SSH tersimpan SEKALI (sumber utama alur VM) ----------
+
+fn setup_val(db: &crate::db::Db, key: &str) -> String {
+    db.get_setting(key).unwrap_or_default()
+}
+
+/// Kredensial Proxmox dari Setup. None = belum diisi (isi di menu Setup dulu).
+fn setup_creds(db: &crate::db::Db) -> Option<ProxmoxCreds> {
+    let url = setup_val(db, "setup_proxmox_url");
+    let secret = setup_val(db, "setup_token_secret");
+    if url.trim().is_empty() || secret.trim().is_empty() {
+        return None;
+    }
+    let user = setup_val(db, "setup_proxmox_user");
+    Some(ProxmoxCreds {
+        base_url: url,
+        user: if user.trim().is_empty() { "root@pam".to_string() } else { user },
+        token_id: setup_val(db, "setup_token_id"),
+        token_secret: secret,
+        verify_tls: setup_val(db, "setup_verify_tls") == "1",
+    })
+}
+
+fn setup_node(db: &crate::db::Db) -> String {
+    let n = setup_val(db, "setup_target_node");
+    if n.trim().is_empty() { "pve".to_string() } else { n }
+}
+
+/// GET /api/setup — koneksi tersimpan (secret dimask).
+async fn get_setup(State(s): State<AppState>) -> impl IntoResponse {
+    let secret = setup_val(&s.db, "setup_token_secret");
+    let port: u16 = setup_val(&s.db, "setup_ssh_port").parse().unwrap_or(22);
+    Json(json!({
+        "saved": setup_creds(&s.db).is_some(),
+        "proxmox_url": setup_val(&s.db, "setup_proxmox_url"),
+        "proxmox_user": setup_val(&s.db, "setup_proxmox_user"),
+        "token_id": setup_val(&s.db, "setup_token_id"),
+        "token_secret": if secret.is_empty() { "".to_string() } else { "******".to_string() },
+        "has_token": !secret.is_empty(),
+        "verify_tls": setup_val(&s.db, "setup_verify_tls") == "1",
+        "target_node": setup_node(&s.db),
+        "ssh_host": setup_val(&s.db, "setup_ssh_host"),
+        "ssh_user": setup_val(&s.db, "setup_ssh_user"),
+        "ssh_port": port,
+    }))
+}
+
+/// PUT /api/setup — simpan koneksi. Secret kosong/"******" = pakai lama
+/// (wajib ada bila belum pernah tersimpan).
+async fn put_setup(State(s): State<AppState>, Json(b): Json<crate::models::SetupBody>) -> impl IntoResponse {
+    if b.proxmox_url.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "proxmox_url wajib diisi"}))).into_response();
+    }
+    let mut secret = b.token_secret.trim().to_string();
+    if secret.is_empty() || secret == "******" {
+        secret = setup_val(&s.db, "setup_token_secret");
+    }
+    if secret.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "token_secret wajib diisi (belum ada yang tersimpan)"}))).into_response();
+    }
+    s.db.set_setting("setup_proxmox_url", b.proxmox_url.trim());
+    s.db.set_setting("setup_proxmox_user", if b.proxmox_user.trim().is_empty() { "root@pam" } else { b.proxmox_user.trim() });
+    s.db.set_setting("setup_token_id", b.token_id.trim().trim_start_matches('!'));
+    s.db.set_setting("setup_token_secret", &secret);
+    s.db.set_setting("setup_verify_tls", if b.verify_tls { "1" } else { "0" });
+    s.db.set_setting("setup_target_node", if b.target_node.trim().is_empty() { "pve" } else { b.target_node.trim() });
+    s.db.set_setting("setup_ssh_host", b.ssh_host.trim());
+    s.db.set_setting("setup_ssh_user", if b.ssh_user.trim().is_empty() { "root" } else { b.ssh_user.trim() });
+    s.db.set_setting("setup_ssh_port", &b.ssh_port.to_string());
+    (StatusCode::OK, Json(json!({"ok": true, "message": "koneksi tersimpan"}))).into_response()
+}
+
+// ---------- VMs: clone langsung via API (nama + VMID sesuai permintaan) ----------
+
+fn err_msg(status: StatusCode, e: impl Into<String>) -> axum::response::Response {
+    (status, Json(json!({"error": e.into()}))).into_response()
+}
+
+fn valid_vm_name(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.is_empty() || b.len() > 63 {
+        return false;
+    }
+    let ok = |c: u8| c.is_ascii_alphanumeric() || c == b'-';
+    b.iter().all(|&c| ok(c)) && b[0] != b'-' && *b.last().unwrap() != b'-'
+}
+
+fn valid_ipv4(s: &str) -> bool {
+    let p: Vec<&str> = s.split('.').collect();
+    p.len() == 4 && p.iter().all(|x| x.parse::<u8>().is_ok() && !x.is_empty())
+}
+
+/// GET /api/vms — semua VM QEMU di node Setup (?node= override).
+/// Coba Setup creds dulu, fallback ke kredensial cluster pertama.
+async fn list_all_vms(State(s): State<AppState>, Query(q): Query<NodesQuery>) -> impl IntoResponse {
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = q.node.unwrap_or_else(|| setup_node(&s.db));
+    match proxmox::list_vms(&creds, &node).await {
+        Ok(vms) => {
+            let templates: Vec<Value> = vms.iter().filter(|v| v.template).cloned().map(|v| json!({"name": v.name, "vmid": v.vmid})).collect();
+            (StatusCode::OK, Json(json!({"ok": true, "node": node, "vms": vms, "templates": templates}))).into_response()
+        }
+        Err(e) => err_msg(StatusCode::BAD_GATEWAY, e),
+    }
+}
+
+/// GET /api/templates — template LIVE dari Proxmox; fallback daftar statis
+/// bila Setup/API belum bisa. Coba kredensial Setup dulu, lalu cluster aktif.
+async fn list_templates(State(s): State<AppState>) -> Json<Value> {
+    // 1. Setup creds (sumber utama baru).
+    if let Some(creds) = setup_creds(&s.db) {
+        let node = setup_node(&s.db);
+        if let Ok(all) = proxmox::list_vms(&creds, &node).await {
+            let live: Vec<Value> = all
+                .into_iter()
+                .filter(|v| v.template)
+                .map(|v| json!({"name": v.name, "vmid": v.vmid, "description": format!("template ID {}", v.vmid)}))
+                .collect();
+            if !live.is_empty() {
+                return Json(json!(live));
+            }
+        }
+    }
+    // 2. Coba dari cluster yang punya token.
+    if let Some(creds) = s.first_creds() {
+        let node = setup_node(&s.db);
+        if let Ok(all) = proxmox::list_vms(&creds, &node).await {
+            let live: Vec<Value> = all
+                .into_iter()
+                .filter(|v| v.template)
+                .map(|v| json!({"name": v.name, "vmid": v.vmid, "description": format!("template ID {}", v.vmid)}))
+                .collect();
+            if !live.is_empty() {
+                return Json(json!(live));
+            }
+        }
+    }
+    Json(static_templates())
+}
+
+/// POST /api/vms/clone — clone template -> VM isi data (cloud-init) -> start -> IP.
+/// VM lahir KOSONG sesuai template; isi (ansible) langkah terpisah di Configure.
+async fn clone_vm(State(s): State<AppState>, Json(b): Json<crate::models::CloneBody>) -> impl IntoResponse {
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = setup_node(&s.db);
+    let name = b.name.trim().to_string();
+    if !valid_vm_name(&name) {
+        return err_msg(
+            StatusCode::BAD_REQUEST,
+            "nama VM invalid (huruf/angka/strip, maks 63, tidak boleh diawali/diakhiri strip)",
+        );
+    }
+    // 1. Resolve template (harus template beneran, bukan VM biasa).
+    let all = match proxmox::list_vms(&creds, &node).await {
+        Ok(v) => v,
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
+    };
+    let tpl = match all.iter().find(|v| v.template && v.name == b.template.trim()) {
+        Some(v) => v.vmid,
+        None => {
+            return err_msg(
+                StatusCode::BAD_REQUEST,
+                format!("template '{}' tidak ditemukan di node {} (harus template, bukan VM biasa)", b.template.trim(), node),
+            )
+        }
+    };
+    // 2. VMID: sesuai permintaan, atau nextid otomatis.
+    let vmid = match b.vmid {
+        Some(v) => {
+            if v < 100 || v > 999999999 {
+                return err_msg(StatusCode::BAD_REQUEST, "vmid harus 100..999999999");
+            }
+            if all.iter().any(|x| x.vmid == v) {
+                return err_msg(StatusCode::CONFLICT, format!("vmid {v} sudah dipakai"));
+            }
+            v
+        }
+        None => match proxmox::next_vmid(&creds).await {
+            Ok(v) => v,
+            Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
+        },
+    };
+    // 3. Clone (full default) + tunggu selesai.
+    let upid = match proxmox::clone_vm(&creds, &node, tpl, vmid, &name, b.full, non_empty(&b.storage)).await {
+        Ok(u) => u,
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, format!("clone gagal: {e}")),
+    };
+    match proxmox::wait_task(&creds, &node, &upid).await {
+        Ok(true) => {}
+        Ok(false) => return err_msg(StatusCode::GATEWAY_TIMEOUT, format!("clone timeout (task {upid}); cek Proxmox manual")),
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, format!("clone gagal: {e} (task {upid})")),
+    }
+    // 4. Cloud-init: user + key panel + IP (DHCP default) + DNS.
+    let ciuser = if b.ciuser.trim().is_empty() { "ubuntu".to_string() } else { b.ciuser.trim().to_string() };
+    let key = panel_ssh_key().await;
+    let ipconfig = if b.static_ip.trim().is_empty() {
+        "ip=dhcp".to_string()
+    } else {
+        if !valid_ipv4(b.static_ip.trim()) {
+            return err_msg(StatusCode::BAD_REQUEST, format!("static_ip invalid, VM {name} ({vmid}) sudah ter-clone — hapus/perbaiki manual"));
+        }
+        let gw = if b.gateway.trim().is_empty() {
+            format!("{}.1", b.static_ip.trim().rsplit_once('.').map(|x| x.0).unwrap_or(""))
+        } else {
+            b.gateway.trim().to_string()
+        };
+        format!("ip={}/24,gw={}", b.static_ip.trim(), gw)
+    };
+    let ns = if b.nameserver.trim().is_empty() { "8.8.8.8".to_string() } else { b.nameserver.trim().to_string() };
+    if let Err(e) = proxmox::set_vm_config(&creds, &node, vmid, &ciuser, key.as_deref(), &ipconfig, &ns).await {
+        return err_msg(
+            StatusCode::BAD_GATEWAY,
+            format!("VM {name} ({vmid}) ter-clone TAPI config gagal: {e} — perbaiki via Proxmox UI"),
+        );
+    }
+    // 5. Start (default) + deteksi IP via agent (best-effort, DHCP butuh waktu).
+    if b.start {
+        if let Err(e) = proxmox::vm_power(&creds, &node, vmid, "start").await {
+            return err_msg(
+                StatusCode::BAD_GATEWAY,
+                format!("VM {name} ({vmid}) ter-clone TAPI start gagal: {e} — start manual di Proxmox"),
+            );
+        }
+    }
+    let mut ip: Option<String> = None;
+    for _ in 0..8 {
+        match proxmox::vm_ip(&creds, &node, vmid).await {
+            Ok(Some(found)) => {
+                ip = Some(found);
+                break;
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_secs(5)).await,
+        }
+    }
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "ok": true, "vmid": vmid, "name": name, "ip": ip,
+            "hint": if ip.is_none() { "IP belum terbaca (agent/DHCP lambat) — cek GET /api/vms/:vmid/ip beberapa saat lagi" } else { "" },
+        })),
+    )
+        .into_response()
+}
+
+fn non_empty(s: &str) -> Option<&str> {
+    let t = s.trim();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+/// DELETE /api/vms/:vmid — hapus VM (harus stopped dulu).
+async fn delete_vm(State(s): State<AppState>, Path(vmid_raw): Path<String>) -> impl IntoResponse {
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = setup_node(&s.db);
+    let vmid: u64 = match vmid_raw.parse() {
+        Ok(v) => v,
+        Err(_) => return err_msg(StatusCode::BAD_REQUEST, "invalid vmid"),
+    };
+    let all = match proxmox::list_vms(&creds, &node).await {
+        Ok(v) => v,
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
+    };
+    match all.into_iter().find(|v| v.vmid == vmid) {
+        None => return err_msg(StatusCode::NOT_FOUND, format!("vmid {vmid} tidak ada di node {node}")),
+        Some(v) if v.template => return err_msg(StatusCode::BAD_REQUEST, "itu TEMPLATE — hapus manual di Proxmox bila yakin"),
+        Some(v) if v.status == "running" => {
+            return err_msg(StatusCode::BAD_REQUEST, "VM running — shutdown/stop dulu")
+        }
+        _ => {}
+    }
+    match proxmox::delete_vm(&creds, &node, vmid).await {
+        Ok(()) => (StatusCode::OK, Json(json!({"ok": true}))).into_response(),
+        Err(e) => err_msg(StatusCode::BAD_GATEWAY, e),
+    }
+}
+
+/// GET /api/vms/:vmid/ip — IP via guest-agent (null bila belum ada).
+async fn vm_ip_addr(State(s): State<AppState>, Path(vmid_raw): Path<String>) -> impl IntoResponse {
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = setup_node(&s.db);
+    let vmid: u64 = match vmid_raw.parse() {
+        Ok(v) => v,
+        Err(_) => return err_msg(StatusCode::BAD_REQUEST, "invalid vmid"),
+    };
+    match proxmox::vm_ip(&creds, &node, vmid).await {
+        Ok(ip) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "vmid": vmid, "ip": ip,
+                "hint": if ip.is_none() { "agent belum jawab (VM mati / agent belum aktif / baru boot)" } else { "" }})),
+        )
+            .into_response(),
+        Err(e) => err_msg(StatusCode::BAD_GATEWAY, format!("{e} (agent belum aktif?)")),
+    }
+}
+
+/// POST /api/vms/:vmid/:action — power VM pilihan (start|shutdown|reboot|stop).
+async fn vm_power(
+    State(s): State<AppState>,
+    Path((vmid_raw, action)): Path<(String, String)>,
+) -> impl IntoResponse {
+    const ALLOWED: &[&str] = &["start", "shutdown", "reboot", "stop"];
+    if !ALLOWED.contains(&action.as_str()) {
+        return err_msg(StatusCode::BAD_REQUEST, "action harus: start, shutdown, reboot, stop");
+    }
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = setup_node(&s.db);
+    let vmid: u64 = match vmid_raw.parse() {
+        Ok(v) => v,
+        Err(_) => return err_msg(StatusCode::BAD_REQUEST, "invalid vmid"),
+    };
+    let name = match proxmox::list_vms(&creds, &node).await {
+        Ok(all) => match all.into_iter().find(|v| v.vmid == vmid && !v.template) {
+            Some(v) => v.name,
+            None => return err_msg(StatusCode::NOT_FOUND, format!("vmid {vmid} tidak ada (atau itu template)")),
+        },
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
+    };
+    match proxmox::vm_power(&creds, &node, vmid, &action).await {
+        Ok(task) => (
+            StatusCode::OK,
+            Json(json!({"ok": true, "name": name, "task": task})),
+        )
+            .into_response(),
+        Err(e) => err_msg(StatusCode::BAD_GATEWAY, e),
+    }
+}
+
+// ---------- configure: pilih VM -> tanam template (ansible, async) ----------
+
+/// Template konfigurasi: id -> (playbook, grup inventory, deskripsi).
+/// Playbook k8s/nginx memakai grup bawaannya; redis/postgres/nodejs pakai
+/// grup `configured` (lihat playbook masing-masing).
+fn config_template(id: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    match id {
+        "k8s-master" => Some(("playbook-master.yml", "k8s_master", "Kubernetes master (init + Calico)")),
+        "k8s-worker" => Some(("playbook-workers.yml", "k8s_workers", "Kubernetes worker (join)")),
+        "redis" => Some(("playbook-redis.yml", "configured", "Redis server")),
+        "postgres" => Some(("playbook-postgres.yml", "configured", "PostgreSQL server")),
+        "nodejs" => Some(("playbook-nodejs.yml", "configured", "Node.js LTS + pm2")),
+        "nginx" => Some(("playbook-nginx.yml", "nginx_group", "Nginx landing page")),
+        _ => None,
+    }
+}
+
+/// GET /api/configure/templates — daftar template tanam.
+async fn config_templates() -> Json<Value> {
+    Json(json!([
+        {"id": "k8s-master", "playbook": "playbook-master.yml", "description": "Kubernetes master (init + Calico)"},
+        {"id": "k8s-worker", "playbook": "playbook-workers.yml", "description": "Kubernetes worker (join)"},
+        {"id": "redis", "playbook": "playbook-redis.yml", "description": "Redis server"},
+        {"id": "postgres", "playbook": "playbook-postgres.yml", "description": "PostgreSQL server"},
+        {"id": "nodejs", "playbook": "playbook-nodejs.yml", "description": "Node.js LTS + pm2"},
+        {"id": "nginx", "playbook": "playbook-nginx.yml", "description": "Nginx landing page"},
+    ]))
+}
+
+/// Inventory untuk tanam: semua target di [configured] + grup template.
+fn build_configure_inventory(run_id: &str, template: &str, hosts: &[(String, String, String)]) -> String {
+    let group = config_template(template).map(|(_, g, _)| g).unwrap_or("configured");
+    let mut inv = format!("# Generated by proxpilot configure {run_id} (template {template})\n[configured]\n");
+    for (alias, ip, user) in hosts {
+        inv.push_str(&format!("{alias} ansible_host={ip} ansible_user={user}\n"));
+    }
+    if group != "configured" {
+        inv.push_str(&format!("\n[{group}]\n"));
+        for (alias, _, _) in hosts {
+            inv.push_str(&format!("{alias}\n"));
+        }
+    }
+    inv.push_str("\n[all:vars]\nansible_ssh_common_args=-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10\n");
+    inv
+}
+
+/// POST /api/configure — tanam template ke VM terpilih (async, poll via runs/:id).
+/// Syarat: ansible ada di host panel (WSL/native), folder ansible ketemu.
+async fn configure_run(State(s): State<AppState>, Json(b): Json<crate::models::ConfigureBody>) -> impl IntoResponse {
+    let (playbook, _group, _desc) = match config_template(b.template.trim()) {
+        Some(t) => t,
+        None => return err_msg(StatusCode::BAD_REQUEST, "template tidak dikenal"),
+    };
+    if b.vmids.is_empty() {
+        return err_msg(StatusCode::BAD_REQUEST, "pilih minimal 1 VM");
+    }
+    let creds = setup_creds(&s.db)
+        .or_else(|| s.first_creds());
+    if creds.is_none() {
+        return err_msg(StatusCode::BAD_REQUEST, "isi Setup dulu atau buat cluster dengan token API (koneksi belum tersimpan)");
+    }
+    let creds = creds.unwrap();
+    let node = setup_node(&s.db);
+    // ansible harus ada di host panel (dieksekusi lokal/WSL, bukan remote).
+    let via_wsl = tokio::task::spawn_blocking(exec::wsl_available).await.unwrap_or(false);
+    let ansible_ok = tokio::task::spawn_blocking(move || {
+        if via_wsl { exec::tool_version_wsl("ansible") } else { exec::tool_version_local("ansible") }
+    })
+    .await
+    .map(|r| r.ok)
+    .unwrap_or(false);
+    if !ansible_ok {
+        return err_msg(
+            StatusCode::BAD_REQUEST,
+            "ansible tidak ada di host panel (install di WSL: sudo apt install ansible)",
+        );
+    }
+    let pb_path = format!("{}/{playbook}", s.ansible_dir);
+    if !std::path::Path::new(&pb_path).exists() {
+        return err_msg(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("playbook tidak ketemu di {} (set PANEL_ANSIBLE bila repo di path lain)", s.ansible_dir),
+        );
+    }
+    // Resolve VM -> (alias, ip, user). IP wajib ada (agent).
+    let ssh_user = if b.ssh_user.trim().is_empty() { "ubuntu".to_string() } else { b.ssh_user.trim().to_string() };
+    let all = match proxmox::list_vms(&creds, &node).await {
+        Ok(v) => v,
+        Err(e) => return err_msg(StatusCode::BAD_GATEWAY, e),
+    };
+    let mut hosts: Vec<(String, String, String)> = vec![];
+    let mut names: Vec<String> = vec![];
+    for vmid in &b.vmids {
+        let vm = match all.iter().find(|v| v.vmid == *vmid && !v.template) {
+            Some(v) => v,
+            None => return err_msg(StatusCode::NOT_FOUND, format!("vmid {vmid} tidak ada (atau itu template)")),
+        };
+        if vm.status != "running" {
+            return err_msg(StatusCode::BAD_REQUEST, format!("{} ({vmid}) sedang {} — start dulu", vm.name, vm.status));
+        }
+        let ip = match proxmox::vm_ip(&creds, &node, *vmid).await {
+            Ok(Some(ip)) => ip,
+            _ => {
+                return err_msg(
+                    StatusCode::BAD_REQUEST,
+                    format!("{} ({vmid}) belum ada IP (tunggu guest-agent, lalu ulangi)", vm.name),
+                )
+            }
+        };
+        names.push(vm.name.clone());
+        hosts.push((vm.name.clone(), ip, ssh_user.clone()));
+    }
+    // Tulis inventory run (folder = id run, konsisten).
+    let rid = s.create_config_run(b.template.trim(), names);
+    let dir = format!("{}/configure/{rid}", s.infra_dir);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return err_msg(StatusCode::INTERNAL_SERVER_ERROR, "gagal siapkan folder configure");
+    }
+    let inv = build_configure_inventory(&rid, b.template.trim(), &hosts);
+    let inv_path = format!("{dir}/inventory.ini");
+    if std::fs::write(&inv_path, &inv).is_err() {
+        return err_msg(StatusCode::INTERNAL_SERVER_ERROR, "gagal tulis inventory configure");
+    }
+    let bg = s.clone();
+    let rid_clone = rid.clone();
+    tokio::spawn(async move {
+        bg.push_config_log(&rid_clone, &format!("target: {inv_path}\nplaybook: {pb_path}\n\n"));
+        // Panel di Windows (tanpa ansible native) -> lewat WSL bridge.
+        let (ok, txt): (bool, String) = tokio::task::spawn_blocking(move || {
+            if via_wsl {
+                let q = |p: &str| format!("\"{}\"", p.replace('\\', "\\\\").replace('"', "\\\""));
+                let cmd = format!("ansible-playbook -i {} {} 2>&1", q(&win_to_wsl(&inv_path)), q(&win_to_wsl(&pb_path)));
+                let r = exec::run_in_wsl(&cmd);
+                (r.ok, r.output)
+            } else {
+                match std::process::Command::new("ansible-playbook").args(["-i", &inv_path, &pb_path]).output() {
+                    Ok(o) => (
+                        o.status.success(),
+                        format!(
+                            "{}\n[stderr]\n{}",
+                            String::from_utf8_lossy(&o.stdout),
+                            String::from_utf8_lossy(&o.stderr)
+                        ),
+                    ),
+                    Err(e) => (false, format!("failed to spawn ansible-playbook: {e}")),
+                }
+            }
+        })
+        .await
+        .unwrap_or((false, "task join failed".to_string()));
+        bg.push_config_log(&rid_clone, &truncate(&txt, 20000));
+        bg.finish_config_run(&rid_clone, if ok { "done" } else { "failed" });
+    });
+    (StatusCode::ACCEPTED, Json(json!({"ok": true, "run_id": rid}))).into_response()
+}
+
+/// GET /api/configure/runs/:id — status + output run (polling).
+async fn configure_status(State(s): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
+    match s.get_config_run(&id) {
+        Some(r) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true, "id": r.id, "template": r.template, "vms": r.vms,
+                "status": r.status, "output": r.output,
+            })),
+        )
+            .into_response(),
+        None => err_msg(StatusCode::NOT_FOUND, "run tidak ditemukan"),
+    }
+}
+
 /// `terraform output -json` di host lokal (native) atau via WSL bridge.
 fn terraform_output_local(dir: &str, via_wsl: bool) -> Option<String> {
     if via_wsl {
@@ -1426,11 +2587,11 @@ variable "worker_ipconfigs" {
 }
 
 provider "proxmox" {
-  pm_api_url      = var.proxmox_api_url
-  pm_user         = split(":", var.proxmox_user)[0]
-  pm_api_token_id = split(":", var.proxmox_user)[1]
+  pm_api_url          = var.proxmox_api_url
+  pm_user             = split(":", var.proxmox_user)[0]
+  pm_api_token_id     = split(":", var.proxmox_user)[1]
   pm_api_token_secret = var.proxmox_token
-  pm_tls_insecure = true
+  pm_tls_insecure     = true
 }
 
 resource "proxmox_vm_qemu" "master" {
@@ -1438,20 +2599,20 @@ resource "proxmox_vm_qemu" "master" {
   name        = "${var.name_prefix}-master-${count.index}"
   target_node = var.target_node
   clone       = var.clone_template
-  cores = var.master_cpu
-  sockets = 1
-  cpu = "host"
-  memory = var.master_ram
-  agent = 1
-  os_type = "cloud-init"
-  scsihw = "virtio-scsi-single"
+  cores       = var.master_cpu
+  sockets     = 1
+  cpu         = "host"
+  memory      = var.master_ram
+  agent       = 1
+  os_type     = "cloud-init"
+  scsihw      = "virtio-scsi-single"
   network {
     bridge   = var.network_bridge
     firewall = false
     model    = "virtio"
     tag      = var.vlan_tag
   }
-  ipconfig0 = length(var.master_ipconfigs) > count.index ? var.master_ipconfigs[count.index] : "ip=dhcp"
+  ipconfig0  = length(var.master_ipconfigs) > count.index ? var.master_ipconfigs[count.index] : "ip=dhcp"
   nameserver = var.dns1
   dynamic "disk" {
     for_each = var.disk_size_gb > 0 ? [1] : []
@@ -1461,11 +2622,11 @@ resource "proxmox_vm_qemu" "master" {
       size    = "${var.disk_size_gb}G"
     }
   }
-  ciuser = var.ciuser
-  sshkeys = var.sshkeys
+  ciuser   = var.ciuser
+  sshkeys  = var.sshkeys
   ssh_user = var.ssh_user
   oncreate = true
-  onboot = true
+  onboot   = true
   lifecycle { ignore_changes = [network] }
 }
 
@@ -1474,20 +2635,20 @@ resource "proxmox_vm_qemu" "worker" {
   name        = "${var.name_prefix}-worker-${count.index}"
   target_node = var.target_node
   clone       = var.clone_template
-  cores = var.worker_cpu
-  sockets = 1
-  cpu = "host"
-  memory = var.worker_ram
-  agent = 1
-  os_type = "cloud-init"
-  scsihw = "virtio-scsi-single"
+  cores       = var.worker_cpu
+  sockets     = 1
+  cpu         = "host"
+  memory      = var.worker_ram
+  agent       = 1
+  os_type     = "cloud-init"
+  scsihw      = "virtio-scsi-single"
   network {
     bridge   = var.network_bridge
     firewall = false
     model    = "virtio"
     tag      = var.vlan_tag
   }
-  ipconfig0 = length(var.worker_ipconfigs) > count.index ? var.worker_ipconfigs[count.index] : "ip=dhcp"
+  ipconfig0  = length(var.worker_ipconfigs) > count.index ? var.worker_ipconfigs[count.index] : "ip=dhcp"
   nameserver = var.dns1
   dynamic "disk" {
     for_each = var.disk_size_gb > 0 ? [1] : []
@@ -1497,22 +2658,22 @@ resource "proxmox_vm_qemu" "worker" {
       size    = "${var.disk_size_gb}G"
     }
   }
-  ciuser = var.ciuser
-  sshkeys = var.sshkeys
+  ciuser   = var.ciuser
+  sshkeys  = var.sshkeys
   ssh_user = var.ssh_user
   oncreate = true
-  onboot = true
+  onboot   = true
   lifecycle { ignore_changes = [network] }
 }
 
 output "master_ips" {
   description = "IPs of master VMs (static when ipconfigs given, else DHCP via guest-agent)"
-  value = proxmox_vm_qemu.master[*].default_ipv4_address
+  value       = proxmox_vm_qemu.master[*].default_ipv4_address
 }
 
 output "worker_ips" {
   description = "DHCP IPs of worker VMs (fill into inventory.ini)"
-  value = proxmox_vm_qemu.worker[*].default_ipv4_address
+  value       = proxmox_vm_qemu.worker[*].default_ipv4_address
 }
 "#
 }
@@ -1564,6 +2725,12 @@ fn _unused(_m: &HashMap<String, String>) {
 mod tests {
     use super::*;
 
+    /// tfvars ditulis rata ala `terraform fmt` — normalisasi whitespace
+    /// sebelum assert agar tidak bergantung jumlah spasi.
+    fn norm_ws(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
     #[test]
     fn wsl_path_conversion() {
         assert_eq!(win_to_wsl("D:\\a\\b"), "/mnt/d/a/b");
@@ -1590,6 +2757,7 @@ mod tests {
         write_terraform(&infra, &c, None).unwrap();
 
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("proxmox_token = \"s3cr\\\"et\""), "{tfvars}");
         assert!(!tfvars.contains("redacted"));
 
@@ -1729,6 +2897,7 @@ mod tests {
         write_terraform(&infra, &c, None).unwrap();
 
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("master_ipconfigs = [\"ip=10.0.0.20/24,gw=192.168.1.1\"]"), "{tfvars}");
         assert!(tfvars.contains("worker_ipconfigs = [\"ip=10.0.0.21/24,gw=192.168.1.1\"]"), "{tfvars}");
 
@@ -1764,6 +2933,7 @@ mod tests {
         let infra = base.to_string_lossy().to_string();
         write_terraform(&infra, &a, None).unwrap();
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", a.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains(&format!("name_prefix = \"{pa}\"")), "{tfvars}");
         let main = std::fs::read_to_string(format!("{infra}/terraform/{}/main.tf", a.id)).unwrap();
         assert!(main.contains("${var.name_prefix}-master-${count.index}"), "{main}");
@@ -1869,17 +3039,19 @@ mod tests {
         // Dengan key: ciuser + sshkeys terisi
         write_terraform(&infra, &c, Some("ssh-ed25519 AAAAtest panel")).unwrap();
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("ciuser = \"rocky\""), "{tfvars}");
         assert!(tfvars.contains("sshkeys = \"ssh-ed25519 AAAAtest panel\""), "{tfvars}");
 
         // Tanpa key: null (argumen dianggap tidak diset, template fallback berlaku)
         write_terraform(&infra, &c, None).unwrap();
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("sshkeys = null"), "{tfvars}");
 
         let main = std::fs::read_to_string(format!("{infra}/terraform/{}/main.tf", c.id)).unwrap();
-        assert!(main.contains("ciuser = var.ciuser"), "{main}");
-        assert!(main.contains("sshkeys = var.sshkeys"), "{main}");
+        assert!(main.contains("ciuser   = var.ciuser"), "{main}");
+        assert!(main.contains("sshkeys  = var.sshkeys"), "{main}");
 
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1912,6 +3084,7 @@ mod tests {
         write_terraform(&infra, &c, None).unwrap();
 
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("disk_size_gb = 50"), "{tfvars}");
         assert!(tfvars.contains("disk_storage = \"local-lvm\""), "{tfvars}");
         assert!(tfvars.contains("vlan_tag = 20"), "{tfvars}");
@@ -1930,6 +3103,7 @@ mod tests {
         .unwrap();
         write_terraform(&infra, &d, None).unwrap();
         let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", d.id)).unwrap();
+        let tfvars = norm_ws(&tfvars);
         assert!(tfvars.contains("disk_size_gb = 0"), "{tfvars}");
         assert!(tfvars.contains("vlan_tag = -1"), "{tfvars}");
 
@@ -1957,6 +3131,17 @@ mod tests {
         .unwrap();
         write_terraform(&infra, &c, Some("ssh-ed25519 AAAAdummy panel")).unwrap();
         println!("DUMPED to {infra}/terraform/{}", c.id);
+    }
+
+    #[test]
+    fn plan_summary_extracts_plan_line() {
+        let out = "Refreshing state...\nPlan: 3 to add, 0 to change, 1 to destroy.\n\nSaved the plan.";
+        assert_eq!(
+            plan_summary(out).as_deref(),
+            Some("Plan: 3 to add, 0 to change, 1 to destroy.")
+        );
+        assert!(plan_summary("No changes. Your infrastructure matches the configuration.").is_none());
+        assert!(plan_summary("random output").is_none());
     }
 }
 

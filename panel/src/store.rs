@@ -1,5 +1,7 @@
 use crate::db::Db;
 use crate::models::{Cluster, LogEntry};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 #[derive(Debug, Clone)]
@@ -10,16 +12,32 @@ pub struct LogBroadcast {
     pub progress: i32,
 }
 
+/// Hasil eksekusi ansible ad-hoc (menu Configure). In-memory, maks 20 terakhir.
+#[derive(Debug, Clone)]
+pub struct ConfigRun {
+    pub id: String,
+    pub template: String,
+    pub vms: Vec<String>,
+    pub status: String,
+    pub output: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub log_tx: broadcast::Sender<LogBroadcast>,
     pub infra_dir: String,
     pub static_dir: String,
+    pub ansible_dir: String,
+    /// Terraform ops (deploy/destroy/plan) yang sedang berjalan per cluster.
+    /// Mencegah dua `apply` concurrent di folder yang sama (state lock).
+    inflight: Arc<Mutex<HashSet<String>>>,
+    config_runs: Arc<Mutex<std::collections::HashMap<String, ConfigRun>>>,
 }
 
 impl AppState {
-    pub fn new(db: Db, infra_dir: String, static_dir: String) -> Self {
+    pub fn new(db: Db, infra_dir: String, static_dir: String, ansible_dir: String) -> Self {
         // Deployments interrupted by restart can never finish — mark error.
         for id in db.mark_interrupted() {
             let e = LogEntry::new(&id, "provision", "Panel restarted: deployment interrupted.", "error");
@@ -31,7 +49,82 @@ impl AppState {
             log_tx: tx,
             infra_dir,
             static_dir,
+            ansible_dir,
+            inflight: Arc::new(Mutex::new(HashSet::new())),
+            config_runs: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Coba tandai op terraform mulai. False = sudah ada op berjalan.
+    pub fn try_begin_op(&self, cluster_id: &str) -> bool {
+        match self.inflight.lock() {
+            Ok(mut set) => set.insert(cluster_id.to_string()),
+            Err(_) => false,
+        }
+    }
+
+    pub fn end_op(&self, cluster_id: &str) {
+        if let Ok(mut set) = self.inflight.lock() {
+            set.remove(cluster_id);
+        }
+    }
+
+    pub fn op_running(&self, cluster_id: &str) -> bool {
+        self.inflight
+            .lock()
+            .map(|set| set.contains(cluster_id))
+            .unwrap_or(false)
+    }
+
+    // ---------- configure runs (ad-hoc ansible) ----------
+
+    pub fn create_config_run(&self, template: &str, vms: Vec<String>) -> String {
+        let id = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
+        let run = ConfigRun {
+            id: id.clone(),
+            template: template.to_string(),
+            vms,
+            status: "running".to_string(),
+            output: String::new(),
+            created_at: chrono::Utc::now(),
+        };
+        if let Ok(mut map) = self.config_runs.lock() {
+            map.insert(id.clone(), run);
+            // Prune: simpan 20 terakhir saja.
+            if map.len() > 20 {
+                let mut ids: Vec<(String, chrono::DateTime<chrono::Utc>)> =
+                    map.iter().map(|(k, v)| (k.clone(), v.created_at)).collect();
+                ids.sort_by(|a, b| a.1.cmp(&b.1));
+                for (old, _) in ids.iter().take(map.len() - 20) {
+                    map.remove(old);
+                }
+            }
+        }
+        id
+    }
+
+    pub fn push_config_log(&self, id: &str, chunk: &str) {
+        if let Ok(mut map) = self.config_runs.lock() {
+            if let Some(r) = map.get_mut(id) {
+                r.output.push_str(chunk);
+                if r.output.len() > 30000 {
+                    let cut = r.output.len() - 30000;
+                    r.output = format!("...[truncated]\n{}", &r.output[cut..]);
+                }
+            }
+        }
+    }
+
+    pub fn finish_config_run(&self, id: &str, status: &str) {
+        if let Ok(mut map) = self.config_runs.lock() {
+            if let Some(r) = map.get_mut(id) {
+                r.status = status.to_string();
+            }
+        }
+    }
+
+    pub fn get_config_run(&self, id: &str) -> Option<ConfigRun> {
+        self.config_runs.lock().ok()?.get(id).cloned()
     }
 
     pub fn push_log(&self, cluster_id: &str, phase: &str, line: &str, level: &str) {
@@ -131,5 +224,30 @@ impl IntoCreds for Cluster {
             token_secret: self.token_secret.clone(),
             verify_tls: self.verify_tls,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn op_guard_exclusive_per_cluster() {
+        // Satu-satunya test yang menyentuh PANEL_DATA — dir unik per run.
+        let dir = std::env::temp_dir().join(format!("pp-store-test-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("PANEL_DATA", &dir);
+        let db = Db::open().expect("open test db");
+        let st = AppState::new(db, "/tmp/infra".to_string(), "/tmp/static".to_string(), "/tmp/ansible".to_string());
+        assert!(st.try_begin_op("c1"));
+        assert!(!st.try_begin_op("c1"), "op kedua harus ditolak");
+        assert!(st.op_running("c1"));
+        assert!(!st.op_running("c2"));
+        assert!(st.try_begin_op("c2"), "cluster lain tidak terpengaruh");
+        st.end_op("c1");
+        assert!(!st.op_running("c1"));
+        assert!(st.try_begin_op("c1"), "setelah selesai bisa mulai lagi");
+        drop(st);
+        std::env::remove_var("PANEL_DATA");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

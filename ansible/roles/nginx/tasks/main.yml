@@ -1,4 +1,21 @@
 ---
+# Landing page Nginx di master-0.
+# BUGFIX: nginx sekarang diinstal role ini (sebelumnya diasumsikan ada).
+# Debian: sites-available/default. RedHat: conf.d/landing.conf + default
+# bawaan dipindah dari :80 agar tidak rebutan server block.
+- name: Install Nginx (Debian)
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install Nginx (RedHat)
+  dnf:
+    name: nginx
+    state: present
+  when: ansible_os_family == "RedHat"
+
 - name: Create web root directory
   file:
     path: /var/www/landing
@@ -15,7 +32,7 @@
     group: root
     mode: '0644'
 
-- name: Deploy nginx configuration
+- name: Deploy nginx configuration (Debian)
   template:
     src: default.conf.j2
     dest: /etc/nginx/sites-available/default
@@ -23,13 +40,57 @@
     group: root
     mode: '0644'
   notify: restart nginx
+  when: ansible_os_family == "Debian"
 
-- name: Remove default nginx site
+- name: Remove default nginx site (Debian)
   file:
     path: /etc/nginx/sites-enabled/default
     state: absent
   ignore_errors: yes
   notify: restart nginx
+  when: ansible_os_family == "Debian"
+
+- name: Move builtin default off :80 (RedHat)
+  replace:
+    path: /etc/nginx/nginx.conf
+    regexp: 'listen\s+80\s+default_server;'
+    replace: 'listen 8080 default_server;'
+  notify: restart nginx
+  when: ansible_os_family == "RedHat"
+
+- name: Deploy nginx configuration (RedHat)
+  template:
+    src: default.conf.j2
+    dest: /etc/nginx/conf.d/landing.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart nginx
+  when: ansible_os_family == "RedHat"
+
+- name: Allow nginx to serve landing dir (RedHat SELinux)
+  command: chcon -R -t httpd_sys_content_t /var/www/landing
+  changed_when: true
+  when: ansible_os_family == "RedHat"
+
+- name: Check firewalld status (RedHat)
+  command: firewall-cmd --state
+  register: fw_state
+  changed_when: false
+  failed_when: false
+  when: ansible_os_family == "RedHat"
+
+- name: Query HTTP service (RedHat)
+  command: firewall-cmd --permanent --query-service=http
+  register: fw_http
+  changed_when: false
+  failed_when: false
+  when: ansible_os_family == "RedHat" and fw_state.rc == 0
+
+- name: Open HTTP in firewalld (RedHat)
+  # modul firewalld butuh ansible.posix — command selalu ada.
+  command: firewall-cmd --permanent --add-service=http && firewall-cmd --reload
+  when: ansible_os_family == "RedHat" and fw_state.rc == 0 and fw_http.rc != 0
 
 - name: Start and enable nginx
   service:

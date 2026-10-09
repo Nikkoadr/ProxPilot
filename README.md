@@ -22,6 +22,11 @@ Panel menjalankan `terraform init + apply` (lokal atau via `ssh` ke server
 Proxmox), lalu menampilkan perintah ansible lanjutan di log. Detail:
 [`panel/README.md`](panel/README.md).
 
+Alur panel: **Health** (SSH key + test koneksi) → **New Cluster** (VM/Terraform)
+→ **Deploy** → Refresh IPs → **Configure** (isi VM/Ansible) → `run-ansible.sh`.
+Kelola: **Plan** (preview tanpa apply), **Destroy** (hapus VM, definisi tetap),
+VM live + power (start/reboot/shutdown/stop), guard anti deploy-ganda.
+
 ## Cara 2 — manual (tanpa panel)
 
 ```bash

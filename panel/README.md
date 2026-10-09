@@ -153,7 +153,13 @@ halaman cluster-detail → Save → Deploy ulang. Tidak perlu hapus cluster.
 | GET/POST | `/api/clusters` | List / create (wajib `name` + `token_secret`) |
 | PUT | `/api/clusters/:id` | Ubah koneksi/template (URL, SSH, template) tanpa hapus; secret kosong = tetap |
 | GET | `/api/clusters/:id/status` | Status + progress + logs |
-| POST | `/api/clusters/:id/deploy` | Deploy async (background task) |
+| POST | `/api/clusters/:id/deploy` | Deploy async (background task, guard concurrent → 409) |
+| POST | `/api/clusters/:id/plan` | Preview `init + plan` tanpa apply (log fase plan, guard concurrent → 409) |
+| POST | `/api/clusters/:id/preflight` | Cek kesiapan read-only: api, template, terraform/ssh, ip (tanpa ubah apa pun) |
+| POST | `/api/clusters/:id/destroy` | Hapus semua VM (`terraform destroy`), definisi cluster tetap |
+| POST | `/api/clusters/:id/refresh-ips` | Baca ulang `terraform output` tanpa deploy ulang |
+| GET | `/api/clusters/:id/vms` | VM milik cluster (live Proxmox, filter prefix nama) |
+| POST | `/api/clusters/:id/vms/:vmid/:action` | Power: `start`/`shutdown`/`reboot`/`stop` (cek prefix, tercatat di log) |
 | DELETE | `/api/clusters/:id` | Hapus |
 | GET | `/api/nodes` | Live dari Proxmox bila token valid, else mock |
 | GET | `/api/templates` | Daftar template |

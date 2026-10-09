@@ -13,8 +13,9 @@
 <a class="sidebar-brand d-flex align-items-center justify-content-center" href="/index.html"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">Proxmox Panel</div></a>
 <hr class="sidebar-divider my-0">
 <li class="nav-item" id="nav-dash"><a class="nav-link" href="/index.html"><i class="fas fa-tachometer-alt"></i><span>Dashboard</span></a></li>
-<li class="nav-item" id="nav-new"><a class="nav-link" href="/new-cluster.html"><i class="fas fa-plus-circle"></i><span>New Cluster</span></a></li>
 <li class="nav-item" id="nav-health"><a class="nav-link" href="/health.html"><i class="fas fa-heartbeat"></i><span>Health &amp; SSH</span></a></li>
+<li class="nav-item" id="nav-clone"><a class="nav-link" href="/clone-vm.html"><i class="fas fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item" id="nav-config"><a class="nav-link" href="/configure.html"><i class="fas fa-cogs"></i><span>Configure</span></a></li>
 <hr class="sidebar-divider"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
 </ul>
 <div id="content-wrapper" class="d-flex flex-column"><div id="content">
@@ -27,10 +28,15 @@
 <div><h1 class="h3 mb-0 text-gray-800" id="cName">Cluster</h1><div class="text-muted small" id="cMeta"></div><div id="cFeat" class="mt-1"></div></div>
 <div><span id="cStatus" class="badge badge-secondary">pending</span>
 <a href="/index.html" class="btn btn-sm btn-secondary ml-2">← Back</a>
+<a id="btnConfigure" href="#" class="btn btn-sm btn-info ml-1"><i class="fas fa-cogs"></i> Configure</a>
 <button id="btnDeploy" class="btn btn-sm btn-success ml-1"><i class="fas fa-rocket"></i> Deploy</button>
+<button id="btnPlan" class="btn btn-sm btn-secondary ml-1"><i class="fas fa-clipboard-list"></i> Plan</button>
+<button id="btnPreflight" class="btn btn-sm btn-info ml-1"><i class="fas fa-stethoscope"></i> Preflight</button>
+<button id="btnDestroy" class="btn btn-sm btn-warning ml-1"><i class="fas fa-bomb"></i> Destroy VMs</button>
 <button id="btnDelete" class="btn btn-sm btn-danger ml-1"><i class="fas fa-trash"></i> Delete</button></div>
 </div>
 <div class="card shadow mb-4" id="cProg"><div class="card-body"><div class="progress"><div id="cBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width:0%">0%</div></div><div class="small text-muted mt-1">Realtime via WebSocket <code>/api/ws/logs/:id</code> + polling fallback 3s.</div></div></div>
+<div class="card shadow mb-4" id="preCard" style="display:none"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Preflight — cek kesiapan (read-only)</h6></div><div class="card-body"><div id="preRows"></div></div></div>
 <div class="card shadow mb-4"><div class="card-header py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary">Connection (bisa diubah, lalu re-Deploy)</h6><button id="btnSaveConn" class="btn btn-sm btn-primary">Save</button></div>
 <div class="card-body"><div class="form-row">
 <div class="form-group col-md-6"><label>Proxmox URL</label><input id="eUrl" class="form-control"></div>
@@ -50,11 +56,6 @@
 <div class="form-group col-md-4"><label>IP mode</label><select id="eIpMode" class="form-control"><option value="dhcp">DHCP</option><option value="static">Static</option></select></div>
 <div class="form-group col-md-4"><label>Static base IP</label><input id="eStaticBase" class="form-control" placeholder="192.168.1.50"></div>
 <div class="form-group col-md-4"><label class="d-block">&nbsp;</label><small class="text-muted">Ganti mode/base = IP simpanan lama dibersihkan, Deploy ulang untuk berlaku.</small></div>
-<div class="form-group col-md-12"><label>Isi VM (fitur ansible)</label>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatK8s"><label class="form-check-label" for="eFeatK8s">Kubernetes</label></div>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatNginx"><label class="form-check-label" for="eFeatNginx">Nginx</label></div>
-<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatNode"><label class="form-check-label" for="eFeatNode">Node.js</label></div>
-</div>
 </div>
 <div id="connMsg" class="small mb-1"></div>
 <div class="small text-muted">Alamat Proxmox/SSH/template berubah? Ubah di sini → Save → Deploy ulang. Secret tidak ditampilkan.</div>
@@ -66,6 +67,9 @@
 <pre class="out mt-2 small" id="invPreview" style="max-height:220px;overflow:auto">-</pre>
 <div class="small mt-2">Lanjut ansible (dari repo root):<br><code id="ansibleCmds">-</code></div>
 </div></div>
+<div class="card shadow mb-4"><div class="card-header py-3 d-flex justify-content-between align-items-center"><h6 class="m-0 font-weight-bold text-primary">Virtual Machines (live Proxmox)</h6><button id="btnVmRefresh" class="btn btn-sm btn-info"><i class="fas fa-sync"></i></button></div>
+<div class="card-body"><div class="table-responsive"><table class="table table-bordered table-sm"><thead><tr><th>Name</th><th>VMID</th><th>Status</th><th>CPU / Mem</th><th>Uptime</th><th></th></tr></thead><tbody id="vmRows"><tr><td colspan="6" class="text-center text-muted">loading...</td></tr></tbody></table></div>
+<div class="small text-muted">Aksi tercatat di log (fase power). Shutdown = graceful, Stop = paksa.</div></div></div>
 <div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary">Deployment Logs (realtime)</h6></div><div class="card-body"><div class="log-console" id="logBox"><div id="logs" class="text-muted">connecting...</div></div></div></div>
 </div>
 </div>

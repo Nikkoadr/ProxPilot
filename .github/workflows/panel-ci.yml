@@ -1,0 +1,60 @@
+name: panel-ci
+
+# Validasi tiap push/PR: unit test Rust + terraform (init/validate/fmt)
+# terhadap file HASIL GENERATOR + syntax-check ansible.
+# Menangkap regresi seperti: HCL satu-baris multi-arg, required_providers
+# hilang, argumen provider tak dikenal (start vs oncreate).
+
+on:
+  push:
+    branches: ["master"]
+    paths: ["panel/**", "ansible/**", "terraform/**", ".github/workflows/panel-ci.yml"]
+  pull_request:
+    paths: ["panel/**", "ansible/**", "terraform/**", ".github/workflows/panel-ci.yml"]
+
+jobs:
+  rust-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Unit tests
+        run: cargo test
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: hashicorp/setup-terraform@v3
+      - name: Dump file hasil generator
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: cargo test dump_for_terraform_validate -- --ignored --nocapture
+      - name: init + fmt-check + validate
+        run: |
+          D=$(ls -dt "${{ runner.temp }}/pp-validate/terraform/"*/ | head -1)
+          echo "validating $D"
+          cd "$D"
+          terraform init -backend=false -input=false
+          terraform fmt -check .
+          terraform validate
+
+  ansible-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ansible-core (tanpa collections — playbook wajib core-only)
+        run: pip install --quiet ansible-core
+      - name: Syntax-check semua playbook
+        run: |
+          for pb in ansible/playbook-*.yml; do
+            echo "== $pb"
+            ansible-playbook --syntax-check "$pb"
+          done
