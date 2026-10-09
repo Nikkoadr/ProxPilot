@@ -24,7 +24,7 @@
 </nav>
 <div class="container-fluid">
 <div class="d-sm-flex align-items-center justify-content-between mb-4">
-<div><h1 class="h3 mb-0 text-gray-800" id="cName">Cluster</h1><div class="text-muted small" id="cMeta"></div></div>
+<div><h1 class="h3 mb-0 text-gray-800" id="cName">Cluster</h1><div class="text-muted small" id="cMeta"></div><div id="cFeat" class="mt-1"></div></div>
 <div><span id="cStatus" class="badge badge-secondary">pending</span>
 <a href="/index.html" class="btn btn-sm btn-secondary ml-2">← Back</a>
 <button id="btnDeploy" class="btn btn-sm btn-success ml-1"><i class="fas fa-rocket"></i> Deploy</button>
@@ -45,6 +45,11 @@
 <div class="form-group col-md-4"><label>IP mode</label><select id="eIpMode" class="form-control"><option value="dhcp">DHCP</option><option value="static">Static</option></select></div>
 <div class="form-group col-md-4"><label>Static base IP</label><input id="eStaticBase" class="form-control" placeholder="192.168.1.50"></div>
 <div class="form-group col-md-4"><label class="d-block">&nbsp;</label><small class="text-muted">Ganti mode/base = IP simpanan lama dibersihkan, Deploy ulang untuk berlaku.</small></div>
+<div class="form-group col-md-12"><label>Isi VM (fitur ansible)</label>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatK8s"><label class="form-check-label" for="eFeatK8s">Kubernetes</label></div>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatNginx"><label class="form-check-label" for="eFeatNginx">Nginx</label></div>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="eFeatNode"><label class="form-check-label" for="eFeatNode">Node.js</label></div>
+</div>
 </div>
 <div id="connMsg" class="small mb-1"></div>
 <div class="small text-muted">Alamat Proxmox/SSH/template berubah? Ubah di sini → Save → Deploy ulang. Secret tidak ditampilkan.</div>

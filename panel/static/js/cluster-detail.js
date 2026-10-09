@@ -8,6 +8,9 @@ function fillConn(c){
   set('eSshHost',c.ssh_host);set('eSshUser',c.ssh_remote_user||'root');set('eSshPort',c.ssh_port||22);
   const m=document.getElementById('eIpMode');if(m)m.value=c.ip_mode||'dhcp';
   set('eStaticBase',c.static_ip_base);
+  const feats=c.enabled_features||[];
+  const chk=(eid,f)=>{const el=document.getElementById(eid);if(el)el.checked=feats.includes(f);};
+  chk('eFeatK8s','k8s');chk('eFeatNginx','nginx');chk('eFeatNode','nodejs');
   connFilled=true;
 }
 async function saveConn(){
@@ -21,6 +24,7 @@ async function saveConn(){
     ssh_port:parseInt(v('eSshPort'),10)||22,
     ip_mode:(document.getElementById('eIpMode')||{}).value||'dhcp',
     static_ip_base:v('eStaticBase'),
+    enabled_features:collectFeat(),
   });
   try{
     const r=await fetch('/api/clusters/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -42,6 +46,9 @@ function render(data){
   fillConn(c);
   renderIps(c);
   document.getElementById('cName').textContent=c.name||id;
+  const feats=c.enabled_features||[];
+  const fb=document.getElementById('cFeat');
+  if(fb)fb.innerHTML=feats.length?feats.map(f=>`<span class="badge badge-info mr-1">${esc(f)}</span>`).join(''):'<span class="badge badge-secondary">common only</span>';
   document.getElementById('cMeta').textContent=`${c.master_count||1} master · ${c.worker_count||0} worker · ${esc(c.proxmox_url||'')}`;
   const b=document.getElementById('cStatus');
   b.className='badge badge-'+badgeFor(data.status);
@@ -60,6 +67,13 @@ function render(data){
   document.getElementById('logs').innerHTML=logs.length?logs.map(logLine).join(''):'<div class="text-muted">No logs yet. Click Deploy.</div>';
   const box=document.getElementById('logBox');box.scrollTop=box.scrollHeight;
   document.getElementById('btnDeploy').style.display=(data.status==='pending'||data.status==='error')?'':'none';
+}
+function collectFeat(){
+  const out=[];
+  if(document.getElementById('eFeatK8s')?.checked)out.push('k8s');
+  if(document.getElementById('eFeatNginx')?.checked)out.push('nginx');
+  if(document.getElementById('eFeatNode')?.checked)out.push('nodejs');
+  return out;
 }
 function renderIps(c){
   const masters=c.master_ips||[], workers=c.worker_ips||[];

@@ -1,0 +1,33 @@
+---
+# Node.js LTS (NodeSource) + pm2 — untuk VM projek aplikasi, tanpa Kubernetes.
+# Debian/Ubuntu family (apt). Variabel: node_major (default "22").
+- name: Add NodeSource GPG key
+  apt_key:
+    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+    state: present
+
+- name: Add NodeSource repository
+  apt_repository:
+    repo: "deb https://deb.nodesource.com/node_{{ node_major | default('22') }}.x nodistro main"
+    state: present
+
+- name: Install Node.js (includes npm)
+  apt:
+    name: nodejs
+    state: present
+    update_cache: yes
+
+- name: Install pm2 globally
+  npm:
+    name: pm2
+    global: yes
+    state: present
+
+- name: Check node version
+  command: node --version
+  register: node_ver
+  changed_when: false
+
+- name: Show node version
+  debug:
+    msg: "Node.js {{ node_ver.stdout }} installed"

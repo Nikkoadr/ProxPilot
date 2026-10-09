@@ -188,9 +188,8 @@ impl Cluster {
             c.ip_mode = "dhcp".to_string();
         }
         c.static_ip_base = c.static_ip_base.trim().to_string();
-        if c.enabled_features.is_empty() {
-            c.enabled_features = default_features();
-        }
+        // enabled_features: hormati pilihan form (boleh kosong = VM polos).
+        // DB lama tanpa field ini tetap dapat default via #[serde(default)].
         let now = Utc::now();
         c.status = "pending".to_string();
         c.progress = 0;

@@ -168,9 +168,11 @@ halaman cluster-detail → Save → Deploy ulang. Tidak perlu hapus cluster.
    - remote: `scp -r` direktori cluster ke `/tmp/proxpilot/<id>/` lalu `terraform init + apply` di server,
    - sukses apply → status `running` 100% + perintah ansible lanjutan di log.
 4. Log mengalir realtime ke `cluster-detail.html` via WS; kalau WS putus, polling 3s backup.
-5. Kubernetes **tidak** diinstal otomatis (fase kubeadm/Calico palsu sudah dihapus) — jalankan playbook dari repo root dengan `inventory.ini` hasil generate:
-   `ansible-playbook -i $PANEL_DATA/infra/terraform/<id>/inventory.ini ansible/playbook-master.yml` (lalu workers, nginx).
-   Isi `ansible_host` tiap node dari `terraform output` (IP DHCP) terlebih dahulu.
+5. Isi VM **tidak** diinstal otomatis — jalankan playbook sesuai **fitur cluster**
+   (`k8s`, `nginx`, `nodejs`; Docker selalu ikut via playbook common).
+   Perintah persisnya ada di log deploy + file `run-ansible.sh` di folder cluster:
+   `$PANEL_DATA/infra/terraform/<id>/run-ansible.sh` (dari repo root).
+   IP (`ansible_host`) sudah terisi otomatis: statis langsung, DHCP via `terraform output`.
 
 ## Struktur
 

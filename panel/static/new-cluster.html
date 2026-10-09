@@ -62,9 +62,14 @@
 <div class="form-group col-md-2"><label>Masters</label><input id="master_count" type="number" class="form-control" value="1" min="1" max="3"></div>
 <div class="form-group col-md-2"><label>Master CPU</label><input id="master_cpu" type="number" class="form-control" value="4"></div>
 <div class="form-group col-md-2"><label>Master RAM MB</label><input id="master_ram" type="number" class="form-control" value="8192"></div>
-<div class="form-group col-md-2"><label>Workers</label><input id="worker_count" type="number" class="form-control" value="2"></div>
+<div class="form-group col-md-2"><label>Workers</label><input id="worker_count" type="number" class="form-control" value="2" min="0"><small class="form-text text-muted">0 = 1 VM saja</small></div>
 <div class="form-group col-md-2"><label>Worker CPU</label><input id="worker_cpu" type="number" class="form-control" value="2"></div>
 <div class="form-group col-md-2"><label>Worker RAM MB</label><input id="worker_ram" type="number" class="form-control" value="4096"></div>
+<div class="form-group col-md-12"><label>Isi VM (fitur ansible — menentukan playbook yang dijalankan)</label>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_k8s" checked><label class="form-check-label" for="feat_k8s">Kubernetes</label></div>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_nginx" checked><label class="form-check-label" for="feat_nginx">Nginx landing</label></div>
+<div class="form-check form-check-inline"><input type="checkbox" class="form-check-input" id="feat_nodejs"><label class="form-check-label" for="feat_nodejs">Node.js LTS + pm2</label></div>
+<small class="form-text text-muted">Docker selalu terinstal via playbook common. Kosongkan semua = VM polos (hanya paket dasar).</small></div>
 </div></div></div>
 <div id="err" class="text-danger mb-2"></div>
 <button class="btn btn-primary" type="submit"><i class="fas fa-rocket"></i> Create &amp; Deploy</button>

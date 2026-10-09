@@ -63,6 +63,13 @@ async function testSsh(){
     out.textContent=JSON.stringify(r,null,2);
   }catch(e){out.textContent=String(e);}
 }
+function collectFeatures(){
+  const out=[];
+  if(document.getElementById('feat_k8s')?.checked)out.push('k8s');
+  if(document.getElementById('feat_nginx')?.checked)out.push('nginx');
+  if(document.getElementById('feat_nodejs')?.checked)out.push('nodejs');
+  return out;
+}
 async function submit(e){
   e.preventDefault();
   const err=document.getElementById('err');
@@ -81,7 +88,7 @@ async function submit(e){
     ssh_host:useRemote?val('ssh_host'):'',ssh_port:num('ssh_port',22),
     ssh_remote_user:useRemote?(val('ssh_user_remote')||'root'):'',
     use_wsl:true,status:'pending',progress:0,
-    enabled_features:['k8s','nginx'],created_at:new Date().toISOString(),updated_at:new Date().toISOString()
+    enabled_features:collectFeatures(),created_at:new Date().toISOString(),updated_at:new Date().toISOString()
   };
   if(!body.name){err.textContent='Cluster name required';return;}
   if(!body.token_secret){err.textContent='API Token secret required';return;}
