@@ -63,6 +63,15 @@ pub struct Cluster {
     pub verify_tls: bool,
     #[serde(default = "default_features")]
     pub enabled_features: Vec<String>,
+    /// Cara VM dapat IP: "dhcp" (default, perlu DHCP server + guest-agent
+    /// untuk deteksi) atau "static" (ipconfig cloud-init statis dari
+    /// static_ip_base — untuk jaringan tanpa DHCP).
+    #[serde(default = "default_ip_mode")]
+    pub ip_mode: String,
+    /// IP awal blok statis, mis. "192.168.1.50". Master mengambil .50...,
+    /// worker melanjutkan setelahnya. Hanya dipakai bila ip_mode="static".
+    #[serde(default)]
+    pub static_ip_base: String,
     /// IP hasil `terraform output` (DHCP). Disimpan di DB (kolom JSON `data`),
     /// jadi survive restart. Kosong = belum pernah sukses apply.
     #[serde(default)]
@@ -122,6 +131,9 @@ fn default_ssh_user() -> String {
 fn default_ssh_port() -> u16 {
     22
 }
+fn default_ip_mode() -> String {
+    "dhcp".to_string()
+}
 fn default_true() -> bool {
     true
 }
@@ -170,6 +182,12 @@ impl Cluster {
         if c.target_node.is_empty() {
             c.target_node = "pve".to_string();
         }
+        if c.ip_mode.trim() == "static" {
+            c.ip_mode = "static".to_string();
+        } else {
+            c.ip_mode = "dhcp".to_string();
+        }
+        c.static_ip_base = c.static_ip_base.trim().to_string();
         if c.enabled_features.is_empty() {
             c.enabled_features = default_features();
         }

@@ -57,6 +57,8 @@
 <div class="form-group col-md-3"><label>Gateway</label><input id="gateway" class="form-control" value="192.168.1.1"></div>
 <div class="form-group col-md-3"><label>DNS</label><input id="dns1" class="form-control" value="8.8.8.8"></div>
 <div class="form-group col-md-3"><label>SSH user (VM)</label><input id="ssh_user_vm" class="form-control" value="ubuntu"><small class="form-text text-muted">otomatis: rocky → rocky, debian → admin</small></div>
+<div class="form-group col-md-3"><label>IP mode</label><select id="ip_mode" class="form-control"><option value="dhcp">DHCP (perlu DHCP server)</option><option value="static">Static (tanpa DHCP)</option></select></div>
+<div class="form-group col-md-3"><label>Static base IP</label><input id="static_ip_base" class="form-control" placeholder="192.168.1.50"><small class="form-text text-muted">master .50…, worker lanjut. Hanya bila Static.</small></div>
 <div class="form-group col-md-2"><label>Masters</label><input id="master_count" type="number" class="form-control" value="1" min="1" max="3"></div>
 <div class="form-group col-md-2"><label>Master CPU</label><input id="master_cpu" type="number" class="form-control" value="4"></div>
 <div class="form-group col-md-2"><label>Master RAM MB</label><input id="master_ram" type="number" class="form-control" value="8192"></div>

@@ -114,6 +114,16 @@ async fn update_cluster(
     if !payload.dns1.trim().is_empty() {
         cur.dns1 = payload.dns1.trim().to_string();
     }
+    // Mode IP: ganti dhcp<->static atau base berubah = IP simpanan lama
+    // tidak valid lagi, bersihkan agar diisi ulang saat deploy berikutnya.
+    let new_mode = if payload.ip_mode.trim() == "static" { "static" } else { "dhcp" };
+    let new_base = payload.static_ip_base.trim().to_string();
+    if cur.ip_mode != new_mode || cur.static_ip_base != new_base {
+        cur.master_ips.clear();
+        cur.worker_ips.clear();
+    }
+    cur.ip_mode = new_mode.to_string();
+    cur.static_ip_base = new_base;
     if !payload.ssh_user.trim().is_empty() {
         cur.ssh_user = payload.ssh_user.trim().to_string();
     }
@@ -532,6 +542,34 @@ async fn run_deployment(state: AppState, id: &str) {
         ),
         "info",
     );
+    // Static mode: IP sudah pasti sebelum apply — simpan ke DB sekarang juga
+    // (tanpa menunggu guest-agent), inventory.ini ikut memakai IP asli.
+    if cluster.ip_mode == "static" {
+        match static_ips_for_cluster(&cluster) {
+            Some((m, w)) => {
+                save_discovered_ips(&state, &id, m.clone(), w.clone());
+                state.push_log(
+                    &id,
+                    "provision",
+                    &format!(
+                        "Static IP mode: masters [{}] workers [{}] (gw {}). cloud-init tiap VM dikonfigurasi statis.",
+                        m.join(", "),
+                        w.join(", "),
+                        cluster.gateway
+                    ),
+                    "info",
+                );
+            }
+            None => {
+                state.push_log(
+                    &id,
+                    "provision",
+                    "WARNING: ip_mode=static tapi static_ip_base invalid (format A.B.C.D, blok tidak boleh lewat .254). Fallback ke DHCP untuk deploy ini.",
+                    "warning",
+                );
+            }
+        }
+    }
 
     // 3. Provision for real (terraform apply). No fake K8s phases:
     // every log line below reflects a command that actually ran.
@@ -838,8 +876,21 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
     }
     // NOTE: the real token secret is required here — `terraform apply`
     // cannot authenticate with a redacted placeholder.
+    // Static IP mode: hitung ipconfig cloud-init per-VM dari static_ip_base.
+    // List kosong = fallback "ip=dhcp" di main.tf (lihat conditional di sana).
+    let (master_cfg, worker_cfg) = static_ipconfigs_for_cluster(c);
+    let hcl_list = |items: &[String]| {
+        format!(
+            "[{}]",
+            items
+                .iter()
+                .map(|s| format!("\"{}\"", hcl_escape(s)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     let vars = format!(
-        "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\n",
+        "proxmox_api_url = \"{}\"\nproxmox_user = \"{}:{}\"\nproxmox_token = \"{}\"\ntarget_node = \"{}\"\nclone_template = \"{}\"\nnetwork_bridge = \"{}\"\ngateway = \"{}\"\ndns1 = \"{}\"\nssh_user = \"{}\"\nmaster_count = {}\nworker_count = {}\nmaster_cpu = {}\nmaster_ram = {}\nworker_cpu = {}\nworker_ram = {}\nmaster_ipconfigs = {}\nworker_ipconfigs = {}\n",
         hcl_escape(&c.proxmox_url),
         hcl_escape(&c.proxmox_user),
         hcl_escape(&c.token_id),
@@ -856,6 +907,8 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         c.master_ram,
         c.worker_cpu,
         c.worker_ram,
+        hcl_list(&master_cfg),
+        hcl_list(&worker_cfg),
     );
     let tfvars = format!("{dir}/terraform.tfvars");
     std::fs::write(&tfvars, vars)?;
@@ -865,11 +918,20 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         let _ = std::fs::set_permissions(&tfvars, std::fs::Permissions::from_mode(0o600));
     }
     std::fs::write(format!("{dir}/main.tf"), terraform_main_tf())?;
-    // Ansible inventory sized to the requested counts. Kalau DB sudah punya
-    // master_ips/worker_ips (hasil deploy sebelumnya), langsung pakai IP asli;
-    // kalau belum, tulis placeholder dulu — nanti dioverwrite setelah
-    // `terraform output` sukses (lihat fetch_and_save_ips).
-    std::fs::write(format!("{dir}/inventory.ini"), build_inventory(c))?;
+    // Ansible inventory sized to the requested counts. Prioritas isi:
+    // 1. IP statis (diketahui sebelum deploy — tanpa perlu guest-agent),
+    // 2. IP simpanan DB (hasil deploy sebelumnya),
+    // 3. placeholder (dioverwrite setelah `terraform output` sukses).
+    let inv_cluster = match static_ips_for_cluster(c) {
+        Some((m, w)) => {
+            let mut cc = c.clone();
+            cc.master_ips = m;
+            cc.worker_ips = w;
+            cc
+        }
+        None => c.clone(),
+    };
+    std::fs::write(format!("{dir}/inventory.ini"), build_inventory(&inv_cluster))?;
     // Manual fallback for remote apply (used automatically by remote mode,
     // runnable by hand when scp/ssh from the panel is unavailable).
     let remote_user = if c.ssh_remote_user.trim().is_empty() {
@@ -890,6 +952,57 @@ fn write_terraform(infra_dir: &str, c: &Cluster) -> std::io::Result<()> {
         let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
     }
     Ok(())
+}
+
+/// Hitung IP statis dari `static_ip_base` (mis. "192.168.1.50", /24).
+/// Master mengambil N pertama, worker melanjutkan setelahnya.
+/// None bila mode dhcp, base bukan IPv4 valid, atau blok melewati .254.
+fn static_ips_for_cluster(c: &Cluster) -> Option<(Vec<String>, Vec<String>)> {
+    if c.ip_mode.trim() != "static" {
+        return None;
+    }
+    let parts: Vec<&str> = c.static_ip_base.trim().split('.').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let mut oct = [0u8; 4];
+    for (i, p) in parts.iter().enumerate() {
+        oct[i] = p.parse::<u8>().ok()?;
+    }
+    if oct[3] == 0 {
+        return None;
+    }
+    let m = c.master_count.max(1) as u16;
+    let w = c.worker_count.max(0) as u16;
+    if oct[3] as u16 + m + w - 1 > 254 {
+        return None;
+    }
+    let ip = |last: u8| format!("{}.{}.{}.{last}", oct[0], oct[1], oct[2]);
+    let masters = (0..m).map(|i| ip(oct[3] + i as u8)).collect();
+    let workers = (0..w).map(|i| ip(oct[3] + m as u8 + i as u8)).collect();
+    Some((masters, workers))
+}
+
+/// ipconfig cloud-init per-VM ("ip=.../24,gw=...") untuk terraform.tfvars.
+/// Kosong = main.tf fallback ke "ip=dhcp".
+fn static_ipconfigs_for_cluster(c: &Cluster) -> (Vec<String>, Vec<String>) {
+    let (m, w) = match static_ips_for_cluster(c) {
+        Some(v) => v,
+        None => return (vec![], vec![]),
+    };
+    let gw = c.gateway.trim();
+    let cfg = |ips: Vec<String>| {
+        ips.into_iter()
+            .map(|ip| {
+                if gw.is_empty() {
+                    format!("ip={ip}/24")
+                } else {
+                    format!("ip={ip}/24,gw={gw}")
+                }
+            })
+            .collect()
+    };
+    (cfg(m), cfg(w))
 }
 
 /// Build inventory.ini: pakai IP asli dari DB kalau ada, else placeholder.
@@ -1133,6 +1246,8 @@ variable "master_cpu" { type = number }
 variable "master_ram" { type = number }
 variable "worker_cpu" { type = number }
 variable "worker_ram" { type = number }
+variable "master_ipconfigs" { type = list(string) default = [] }
+variable "worker_ipconfigs" { type = list(string) default = [] }
 
 provider "proxmox" {
   pm_api_url      = var.proxmox_api_url
@@ -1155,7 +1270,7 @@ resource "proxmox_vm_qemu" "master" {
   os_type = "cloud-init"
   scsihw = "virtio-scsi-single"
   network { bridge = var.network_bridge firewall = false }
-  ipconfig0 = "ip=dhcp"
+  ipconfig0 = length(var.master_ipconfigs) > count.index ? var.master_ipconfigs[count.index] : "ip=dhcp"
   ssh_user = var.ssh_user
   start = true
   onboot = true
@@ -1175,7 +1290,7 @@ resource "proxmox_vm_qemu" "worker" {
   os_type = "cloud-init"
   scsihw = "virtio-scsi-single"
   network { bridge = var.network_bridge firewall = false }
-  ipconfig0 = "ip=dhcp"
+  ipconfig0 = length(var.worker_ipconfigs) > count.index ? var.worker_ipconfigs[count.index] : "ip=dhcp"
   ssh_user = var.ssh_user
   start = true
   onboot = true
@@ -1183,7 +1298,7 @@ resource "proxmox_vm_qemu" "worker" {
 }
 
 output "master_ips" {
-  description = "DHCP IPs of master VMs (fill into inventory.ini)"
+  description = "IPs of master VMs (static when ipconfigs given, else DHCP via guest-agent)"
   value = proxmox_vm_qemu.master[*].default_ipv4_address
 }
 
@@ -1339,6 +1454,84 @@ mod tests {
         .unwrap();
         assert!(c.master_ips.is_empty());
         assert!(c.worker_ips.is_empty());
+    }
+
+    fn static_cluster(base: &str, masters: i32, workers: i32) -> Cluster {
+        let mut payload: Cluster = serde_json::from_value(serde_json::json!({
+            "name": "s", "token_secret": "x",
+            "ip_mode": "static", "static_ip_base": base,
+            "gateway": "192.168.1.1",
+            "master_count": masters, "worker_count": workers,
+        }))
+        .unwrap();
+        payload = Cluster::new(payload);
+        assert_eq!(payload.ip_mode, "static");
+        payload
+    }
+
+    #[test]
+    fn static_ips_sequential_masters_then_workers() {
+        let c = static_cluster("192.168.1.50", 1, 2);
+        let (m, w) = static_ips_for_cluster(&c).unwrap();
+        assert_eq!(m, vec!["192.168.1.50"]);
+        assert_eq!(w, vec!["192.168.1.51", "192.168.1.52"]);
+
+        let (mcfg, wcfg) = static_ipconfigs_for_cluster(&c);
+        assert_eq!(mcfg, vec!["ip=192.168.1.50/24,gw=192.168.1.1"]);
+        assert_eq!(
+            wcfg,
+            vec!["ip=192.168.1.51/24,gw=192.168.1.1", "ip=192.168.1.52/24,gw=192.168.1.1"]
+        );
+
+        // inventory langsung pakai IP statis, tanpa perlu terraform output
+        let inv = build_inventory(&{
+            let mut cc = c.clone();
+            cc.master_ips = m;
+            cc.worker_ips = w;
+            cc
+        });
+        assert!(inv.contains("ansible_host=192.168.1.50"), "{inv}");
+        assert!(!inv.contains("ansible_host=master-0"));
+    }
+
+    #[test]
+    fn static_ips_reject_bad_base() {
+        for bad in ["", "abc", "192.168.1", "192.168.1.300", "192.168.1.0", "192.168.1.254"] {
+            // .254 + 1 master + 2 worker = lewat .254 -> None; sisanya format salah.
+            let c = static_cluster(bad, 1, 2);
+            assert!(static_ips_for_cluster(&c).is_none(), "{bad}");
+        }
+        // dhcp mode selalu None (tidak mengganggu perilaku lama)
+        let dhcp: Cluster = serde_json::from_value(serde_json::json!({
+            "name": "d", "token_secret": "x", "static_ip_base": "192.168.1.50",
+        }))
+        .map(Cluster::new)
+        .unwrap();
+        assert_eq!(dhcp.ip_mode, "dhcp");
+        assert!(static_ips_for_cluster(&dhcp).is_none());
+        let (m, w) = static_ipconfigs_for_cluster(&dhcp);
+        assert!(m.is_empty() && w.is_empty());
+    }
+
+    #[test]
+    fn filegen_static_writes_ipconfigs_and_real_inventory() {
+        let base = std::env::temp_dir().join(format!("pp-test-{}", uuid::Uuid::new_v4()));
+        let infra = base.to_string_lossy().to_string();
+        let c = static_cluster("10.0.0.20", 1, 1);
+        write_terraform(&infra, &c).unwrap();
+
+        let tfvars = std::fs::read_to_string(format!("{infra}/terraform/{}/terraform.tfvars", c.id)).unwrap();
+        assert!(tfvars.contains("master_ipconfigs = [\"ip=10.0.0.20/24,gw=192.168.1.1\"]"), "{tfvars}");
+        assert!(tfvars.contains("worker_ipconfigs = [\"ip=10.0.0.21/24,gw=192.168.1.1\"]"), "{tfvars}");
+
+        let main = std::fs::read_to_string(format!("{infra}/terraform/{}/main.tf", c.id)).unwrap();
+        assert!(main.contains("var.master_ipconfigs[count.index]"), "{main}");
+
+        let inv = std::fs::read_to_string(format!("{infra}/terraform/{}/inventory.ini", c.id)).unwrap();
+        assert!(inv.contains("ansible_host=10.0.0.20"), "{inv}");
+        assert!(inv.contains("ansible_host=10.0.0.21"), "{inv}");
+
+        std::fs::remove_dir_all(&base).ok();
     }
 }
 

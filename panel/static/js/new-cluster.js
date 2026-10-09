@@ -77,6 +77,7 @@ async function submit(e){
     master_count:num('master_count',1),master_cpu:num('master_cpu',4),master_ram:num('master_ram',8192),
     worker_count:num('worker_count',2),worker_cpu:num('worker_cpu',2),worker_ram:num('worker_ram',4096),
     ssh_user:val('ssh_user_vm')||'ubuntu',ssh_public_key:'',
+    ip_mode:val('ip_mode')||'dhcp',static_ip_base:val('static_ip_base'),
     ssh_host:useRemote?val('ssh_host'):'',ssh_port:num('ssh_port',22),
     ssh_remote_user:useRemote?(val('ssh_user_remote')||'root'):'',
     use_wsl:true,status:'pending',progress:0,
@@ -85,6 +86,7 @@ async function submit(e){
   if(!body.name){err.textContent='Cluster name required';return;}
   if(!body.token_secret){err.textContent='API Token secret required';return;}
   if(!body.clone_template){err.textContent='Select a template';return;}
+  if(body.ip_mode==='static'&&!/^\d{1,3}(\.\d{1,3}){3}$/.test(body.static_ip_base)){err.textContent='Static base IP required (format A.B.C.D, mis. 192.168.1.50)';return;}
   try{
     const c=await apiPost('/api/clusters',body);
     location.href='/cluster-detail.html?id='+encodeURIComponent(c.id);

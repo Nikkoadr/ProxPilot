@@ -6,6 +6,8 @@ function fillConn(c){
   set('eUrl',c.proxmox_url);set('eUser',c.proxmox_user);set('eTokenId',c.token_id);
   set('eNode',c.target_node);set('eTemplate',c.clone_template);
   set('eSshHost',c.ssh_host);set('eSshUser',c.ssh_remote_user||'root');set('eSshPort',c.ssh_port||22);
+  const m=document.getElementById('eIpMode');if(m)m.value=c.ip_mode||'dhcp';
+  set('eStaticBase',c.static_ip_base);
   connFilled=true;
 }
 async function saveConn(){
@@ -17,6 +19,8 @@ async function saveConn(){
     target_node:v('eNode'),clone_template:v('eTemplate'),
     ssh_host:v('eSshHost'),ssh_remote_user:v('eSshUser')||'root',
     ssh_port:parseInt(v('eSshPort'),10)||22,
+    ip_mode:(document.getElementById('eIpMode')||{}).value||'dhcp',
+    static_ip_base:v('eStaticBase'),
   });
   try{
     const r=await fetch('/api/clusters/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
