@@ -1,0 +1,16 @@
+[Unit]
+Description=ProxPilot Panel (Go)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxpilot/panel
+ExecStart=/opt/proxpilot/panel/proxpilot
+Environment=PORT=8080
+Environment=PANEL_DATA=/var/lib/proxpilot
+EnvironmentFile=-/etc/default/proxpilot
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
