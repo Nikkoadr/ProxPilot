@@ -1,7 +1,8 @@
 name: panel
 
 # Validasi tiap push/PR ke master: hijau = aman di-pull ke server.
-# Tidak ada job rilis/tag — update server tetap via sudo panel-update.
+# Job deploy (CD): push master + hijau -> server update sendiri
+# via self-hosted runner. Tanpa tag/rilis.
 
 on:
   push:
@@ -54,3 +55,13 @@ jobs:
             echo "== $pb"
             ansible-playbook --syntax-check "$pb"
           done
+
+  deploy:
+    # CD ala Jenkins: push ke master + 3 job hijau -> server pull + restart sendiri.
+    # Butuh self-hosted runner di server (lihat panel/README bagian CD).
+    needs: [go-test, terraform-validate, ansible-syntax]
+    if: github.ref == 'refs/heads/master'
+    runs-on: self-hosted
+    steps:
+      - name: Pull + rebuild + restart
+        run: sudo /usr/local/bin/panel-update

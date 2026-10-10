@@ -57,3 +57,23 @@ sekali saat boot pertama).
 `ansible/playbook-{master,workers,nginx,redis,mariadb}.yml`.
 MariaDB bawa tuning otomatis dari fakta host (buffer pool 50% RAM,
 log 25% pool, max_connections ikut RAM, thread cache ikut vCPU).
+
+## CD otomatis (opsional, ala Jenkins)
+
+Push ke master + CI hijau → server update sendiri. Butuh sekali saja:
+
+```bash
+# di server, sebagai root:
+useradd -m gh-runner
+echo 'gh-runner ALL=(ALL) NOPASSWD: /usr/local/bin/panel-update, /usr/bin/systemctl restart proxpilot' > /etc/sudoers.d/proxpilot-cd
+git config --global --add safe.directory /opt/proxpilot
+chown -R gh-runner:gh-runner /opt/proxpilot
+# ambil token runner di GitHub: repo → Settings → Actions → Runners → New self-hosted runner
+su - gh-runner
+mkdir actions-runner && cd actions-runner
+curl -sSL -o runner.tar.gz <URL_DARI_GITHUB>
+tar xzf runner.tar.gz && ./config.sh --url https://github.com/Nikkoadr/ProxPilot --token TOKEN
+sudo ./svc.sh install && sudo ./svc.sh start
+```
+
+Tanpa runner, job `deploy` cuma nunggu (kuning) — 3 job tes tetap jalan normal.
