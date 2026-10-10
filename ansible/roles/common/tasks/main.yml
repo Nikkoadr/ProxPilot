@@ -149,13 +149,15 @@
     - br_netfilter
   changed_when: false
 
-- name: Set sysctl params
-  sysctl:
-    name: "{{ item.key }}"
-    value: "{{ item.value }}"
-    state: present
-    reload: yes
+- name: Persist sysctl params
+  lineinfile:
+    path: /etc/sysctl.d/99-proxpilot-k8s.conf
+    create: yes
+    regexp: "^{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+    mode: '0644'
   loop:
     - { key: 'net.bridge.bridge-nf-call-iptables', value: '1' }
     - { key: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
     - { key: 'net.ipv4.ip_forward', value: '1' }
+  notify: reload sysctl
