@@ -1,9 +1,8 @@
 name: panel-ci
 
-# Validasi tiap push/PR: unit test Rust + terraform (init/validate/fmt)
-# terhadap file HASIL GENERATOR + syntax-check ansible.
-# Menangkap regresi seperti: HCL satu-baris multi-arg, required_providers
-# hilang, argumen provider tak dikenal (start vs oncreate).
+# Validasi tiap push/PR: unit test Go + vet, terraform fmt/validate,
+# dan syntax-check ansible. Menangkap regresi seperti: HCL satu-baris
+# multi-arg, template Go rusak, playbook syntax error.
 
 on:
   push:
@@ -13,37 +12,35 @@ on:
     paths: ["panel/**", "ansible/**", "terraform/**", ".github/workflows/panel-ci.yml"]
 
 jobs:
-  rust-test:
+  go-test:
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: panel
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Unit tests
-        run: cargo test
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: panel/go.sum
+      - name: Vet + unit tests
+        run: |
+          go vet ./...
+          go test ./...
+        env:
+          CGO_ENABLED: 0
 
   terraform-validate:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: panel
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: hashicorp/setup-terraform@v3
-      - name: Dump file hasil generator
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: cargo test dump_for_terraform_validate -- --ignored --nocapture
-      - name: init + fmt-check + validate
+      - name: fmt-check repo terraform
+        run: terraform fmt -check -recursive terraform/
+      - name: init + validate repo terraform
+        working-directory: terraform
         run: |
-          D=$(ls -dt "${{ runner.temp }}/pp-validate/terraform/"*/ | head -1)
-          echo "validating $D"
-          cd "$D"
           terraform init -backend=false -input=false
-          terraform fmt -check .
           terraform validate
 
   ansible-syntax:

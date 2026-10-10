@@ -17,22 +17,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: panel/go.sum
 
       - name: Build release
-        run: cargo build --release
+        run: CGO_ENABLED=0 go build -buildvcs=false -o proxpilot-linux-x86_64 .
+        env:
+          GOFLAGS: -mod=mod
 
       # Gagal berisik kalau binary tidak ada (bukan hijau palsu).
       - name: Verify binary
-        run: ls -lh target/release/proxpilot && file target/release/proxpilot
+        run: ls -lh proxpilot-linux-x86_64 && file proxpilot-linux-x86_64
 
       # gh langsung (preinstalled di runner): gagal berisik kalau file hilang,
       # --clobber menimpa asset saat re-run.
-      # Catatan: `file#nama` di gh hanya mengisi LABEL, bukan nama asset —
-      # jadi rename via cp dulu agar browser_download_url benar.
       - name: Upload asset to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp target/release/proxpilot ./proxpilot-linux-x86_64
           gh release upload "${{ github.ref_name }}" ./proxpilot-linux-x86_64 --clobber
