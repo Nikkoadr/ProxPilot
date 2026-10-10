@@ -1,0 +1,56 @@
+name: panel
+
+# Validasi tiap push/PR ke master: hijau = aman di-pull ke server.
+# Tidak ada job rilis/tag — update server tetap via sudo panel-update.
+
+on:
+  push:
+    branches: ["master"]
+    paths: ["panel/**", "ansible/**", "terraform/**", ".github/workflows/panel.yml"]
+  pull_request:
+    paths: ["panel/**", "ansible/**", "terraform/**", ".github/workflows/panel.yml"]
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: panel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: panel/go.sum
+      - name: Vet + unit tests
+        run: |
+          go vet ./...
+          go test ./...
+        env:
+          CGO_ENABLED: 0
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: fmt-check repo terraform
+        run: terraform fmt -check -recursive terraform/
+      - name: init + validate repo terraform
+        working-directory: terraform
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+  ansible-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ansible-core (tanpa collections — playbook wajib core-only)
+        run: pip install --quiet ansible-core
+      - name: Syntax-check semua playbook
+        run: |
+          for pb in ansible/playbook-*.yml; do
+            echo "== $pb"
+            ansible-playbook --syntax-check "$pb"
+          done
