@@ -5,8 +5,8 @@ frontend **Tabler** (CDN), realtime **SSE**, storage **SQLite**, login
 **admin + password (dapat diubah)**.
 
 Alur terkunci: **Setup** (SSH + API wajib OK & tersimpan) → **Clone VM**
-→ **Configure** (Ansible). Clone/Configure disembunyikan + diblokir
-sampai setup lengkap.
+→ **Deploy** (Terraform: VM + firewall) → **Configure** (Ansible).
+Clone/Deploy/Configure disembunyikan + diblokir sampai setup lengkap.
 
 ## Install (Linux/WSL)
 
@@ -43,7 +43,12 @@ sekali saat boot pertama).
 | POST | `/api/vms/:vmid/:action` | start/shutdown/reboot/stop |
 | DELETE | `/api/vms/:vmid` | hapus (harus stopped) |
 | GET | `/api/configure/templates` | k8s-master, k8s-worker, nginx, redis, mariadb |
-| POST | `/api/configure` | ansible async → `{run_id}` (SSE) |
+| POST | `/api/configure` | ansible async → `{run_id}` (SSE). Host dari `vmids` (live, via agent) atau `hosts:[{name,ip}]` (cluster/static, tanpa agent) |
+| GET/POST | `/api/clusters` | list / buat cluster Terraform |
+| DELETE | `/api/clusters/:id` | hapus definisi (+ file terraform) |
+| GET | `/api/clusters/:id/hosts` | hosts + IP hasil deploy (untuk Configure) |
+| POST | `/api/clusters/:id/deploy` | `terraform init+apply` async → `{run_id}` (SSE) |
+| POST | `/api/clusters/:id/destroy` | `terraform destroy` async (definisi tetap) |
 | GET | `/api/runs/:id` | status + log |
 | GET | `/api/runs/:id/events` | **SSE**: `log`/`done`/`error` |
 

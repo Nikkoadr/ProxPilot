@@ -1,4 +1,11 @@
 // shared helpers
+// Polyfill bila CDN SweetAlert gagal load — halaman tetap jalan.
+if (!window.Swal) {
+  window.Swal = {
+    fire: function () { console.log('Swal fallback:', arguments); return Promise.resolve({}); },
+    mixin: function () { return { fire: function () {} }; }
+  };
+}
 function goLogin(){ if (!location.pathname.includes('login')) location.href = '/login'; }
 async function apiGet(p){
   const r = await fetch(p);
@@ -33,16 +40,27 @@ function fmtMem(b){ if (b == null) return '-'; const m = Math.round(b / 1048576)
 function fmtUptime(s){ s = parseInt(s, 10) || 0; if (s < 60) return s + 's';
   const m = Math.floor(s/60), h = Math.floor(m/60), d = Math.floor(h/24);
   if (d) return d + 'd ' + (h%24) + 'h'; if (h) return h + 'h ' + (m%60) + 'm'; return m + 'm'; }
-// SSE run follower -> appends lines into <pre>, resolves on done/error
+const Toast = Swal.mixin({toast: true, position: 'top-end', showConfirmButton: false, timer: 3000, timerProgressBar: true});
+function toast(icon, title){ Toast.fire({icon, title}); }
+// SSE run follower: streams log lines into <pre>, toast + resolve on done/error
 function followRun(runId, logEl, titleEl){
   return new Promise((resolve, reject) => {
     const es = new EventSource('/api/runs/' + encodeURIComponent(runId) + '/events');
     const line = d => { logEl.textContent += d + '\n'; logEl.scrollTop = logEl.scrollHeight; };
     es.addEventListener('log', e => line(e.data));
-    es.addEventListener('done', e => { if (e.data) line('== ' + e.data); es.close(); resolve(true); });
-    es.addEventListener('error', e => { if (e.data) line('GAGAL: ' + e.data); es.close(); reject(new Error(e.data || 'run gagal')); });
+    es.addEventListener('done', e => {
+      if (e.data) line('== ' + e.data);
+      es.close(); toast('success', 'Selesai'); resolve(true);
+    });
+    es.addEventListener('error', e => {
+      if (e.data) line('GAGAL: ' + e.data);
+      es.close(); Swal.fire('Gagal', e.data || 'run gagal', 'error'); reject(new Error(e.data || 'run gagal'));
+    });
     es.onerror = () => {};
   });
+}
+function confirmAct(title, text){
+  return Swal.fire({title, text, icon: 'warning', showCancelButton: true, confirmButtonText: 'Ya', cancelButtonText: 'Batal'}).then(r => r.isConfirmed);
 }
 document.addEventListener('DOMContentLoaded', () => {
   const lo = document.getElementById('btnLogout');

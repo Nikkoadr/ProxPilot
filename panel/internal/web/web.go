@@ -68,6 +68,7 @@ func (s *Server) Router() *gin.Engine {
 		{
 			gated.GET("/clone", s.pageClone)
 			gated.GET("/configure", s.pageConfigure)
+			gated.GET("/deploy", s.pageDeploy)
 			gated.GET("/api/vms", s.apiVMs)
 			gated.GET("/api/templates", s.apiTemplates)
 			gated.POST("/api/clone", s.apiClone)
@@ -76,6 +77,12 @@ func (s *Server) Router() *gin.Engine {
 			gated.GET("/api/vms/:vmid/ip", s.apiVMIP)
 			gated.GET("/api/configure/templates", s.apiConfigTemplates)
 			gated.POST("/api/configure", s.apiConfigure)
+			gated.GET("/api/clusters", s.apiClusters)
+			gated.POST("/api/clusters", s.apiClusterCreate)
+			gated.DELETE("/api/clusters/:id", s.apiClusterDelete)
+			gated.GET("/api/clusters/:id/hosts", s.apiClusterHosts)
+			gated.POST("/api/clusters/:id/deploy", s.apiClusterDeploy)
+			gated.POST("/api/clusters/:id/destroy", s.apiClusterDestroy)
 		}
 		prot.GET("/api/runs/:id", s.apiRunStatus)
 		prot.GET("/api/runs/:id/events", s.apiRunEvents)

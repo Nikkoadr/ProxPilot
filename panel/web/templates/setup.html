@@ -4,90 +4,85 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ProxPilot — Setup</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="/static/app.css">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/static/custom.css?v=4" rel="stylesheet">
 </head>
-<body>
-<div class="page">
-<aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
-  <div class="container-fluid">
-    <a href="/" class="navbar-brand"><strong>ProxPilot</strong></a>
-    <div class="collapse navbar-collapse" id="sidebar-menu">
-      <ul class="navbar-nav">
-        <li class="nav-item"><a class="nav-link active" href="/setup"><span class="nav-link-icon"><i class="ti ti-plug"></i></span>Setup</a></li>
-        {{if .SetupComplete}}
-        <li class="nav-item"><a class="nav-link" href="/clone"><span class="nav-link-icon"><i class="ti ti-copy"></i></span>Clone VM</a></li>
-        <li class="nav-item"><a class="nav-link" href="/configure"><span class="nav-link-icon"><i class="ti ti-settings"></i></span>Configure</a></li>
-        {{end}}
-        <li class="nav-item"><a class="nav-link" href="/settings"><span class="nav-link-icon"><i class="ti ti-user-cog"></i></span>Settings</a></li>
-      </ul>
-    </div>
-  </div>
-</aside>
-<div class="page-wrapper">
-  <header class="navbar navbar-expand-md d-print-none">
-    <div class="container-xl">
-      <h1 class="navbar-brand">Setup Koneksi</h1>
-      <div class="navbar-nav ms-auto">
-        <span class="nav-link text-muted">{{.User}}</span>
-        <a href="#" id="btnLogout" class="nav-link"><i class="ti ti-logout"></i> Logout</a>
-      </div>
-    </div>
-  </header>
-  <div class="page-body"><div class="container-xl">
-    <div id="gateAlert"></div>
-    <div class="row">
-      <div class="col-lg-6">
-        <div class="card mb-3"><div class="card-header"><h3 class="card-title"><i class="ti ti-key"></i> 1 — SSH Key &amp; Test</h3></div>
-        <div class="card-body">
-          <div class="mb-2"><span id="keyState" class="badge bg-secondary">loading...</span>
-            <pre id="pubKey" class="mt-2 small text-break">(loading...)</pre></div>
-          <button id="btnKeygen" class="btn btn-outline-secondary btn-sm">Generate key</button>
-          <div class="row mt-3">
-            <div class="col-6 mb-2"><label class="form-label">SSH host</label><input id="sHost" class="form-control" placeholder="103.156.16.153"></div>
-            <div class="col-3 mb-2"><label class="form-label">User</label><input id="sUser" class="form-control" value="root"></div>
-            <div class="col-3 mb-2"><label class="form-label">Port</label><input id="sPort" type="number" class="form-control" value="22"></div>
-          </div>
-          <div class="mb-2"><label class="form-label">Password server (sekali saja, untuk salin key)</label>
-            <input id="cPass" type="password" class="form-control"></div>
-          <button id="btnCopyId" class="btn btn-success btn-sm">Salin Key</button>
-          <button id="btnSsh" class="btn btn-info btn-sm ms-1">Test SSH</button>
-          <pre id="sshOut" class="out mt-2">Isi host → Salin Key → Test SSH.</pre>
-        </div></div>
-      </div>
-      <div class="col-lg-6">
-        <div class="card mb-3"><div class="card-header"><h3 class="card-title"><i class="ti ti-server"></i> 2 — Proxmox API</h3></div>
-        <div class="card-body">
-          <div class="mb-2"><label class="form-label">Proxmox URL</label>
-            <input id="pUrl" class="form-control" value="https://192.168.1.100:8006/api2/json"></div>
-          <div class="row">
-            <div class="col-6 mb-2"><label class="form-label">User</label><input id="pUser" class="form-control" value="root@pam"></div>
-            <div class="col-6 mb-2"><label class="form-label">Token ID (setelah '!')</label><input id="pTokenId" class="form-control" placeholder="panel"></div>
-          </div>
-          <div class="mb-2"><label class="form-label">Token secret</label><input id="pTokenSecret" type="password" class="form-control"></div>
-          <div class="row">
-            <div class="col-6 mb-2"><label class="form-label">Target node</label>
-              <div class="input-group"><input id="pNode" class="form-control" placeholder="pve001">
-              <button id="btnNodes" class="btn btn-outline-secondary" type="button">Deteksi</button></div>
-              <small id="nodeHint" class="form-hint">Test API dulu, lalu Deteksi.</small></div>
-            <div class="col-6 mb-2"><label class="form-check mt-4"><input id="pVerify" type="checkbox" class="form-check-input"> Verify TLS</label></div>
-          </div>
-          <button id="btnProx" class="btn btn-warning btn-sm">Test Proxmox API</button>
-          <pre id="proxOut" class="out mt-2">not tested</pre>
-        </div></div>
-        <div class="card mb-3 border-success"><div class="card-header"><h3 class="card-title"><i class="ti ti-device-floppy"></i> 3 — Simpan</h3></div>
-        <div class="card-body">
-          <p class="text-muted">Test saja tidak menyimpan. Simpan agar Clone &amp; Configure bisa dipakai.</p>
-          <button id="btnSave" class="btn btn-success btn-sm">Simpan koneksi</button>
-          <pre id="setupOut" class="out mt-2">belum disimpan</pre>
-        </div></div>
-      </div>
-    </div>
-  </div></div>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">ProxPilot</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item active"><a class="nav-link" href="/setup"><i class="fas fa-fw fa-plug"></i><span>Setup</span></a></li>
+{{if .SetupComplete}}
+<li class="nav-item"><a class="nav-link" href="/clone"><i class="fas fa-fw fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item"><a class="nav-link" href="/deploy"><i class="fas fa-fw fa-rocket"></i><span>Deploy</span></a></li>
+<li class="nav-item"><a class="nav-link" href="/configure"><i class="fas fa-fw fa-cogs"></i><span>Configure</span></a></li>
+{{end}}
+<li class="nav-item"><a class="nav-link" href="/settings"><i class="fas fa-fw fa-cog"></i><span>Settings</span></a></li>
+<hr class="sidebar-divider d-none d-md-block"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<ul class="navbar-nav ml-auto"><li class="nav-item"><span class="nav-link text-gray-600 small">{{.User}}</span></li>
+<li class="nav-item"><a id="btnLogout" class="nav-link" href="#"><i class="fas fa-sign-out-alt"></i> <span class="d-none d-lg-inline text-gray-600 small">Logout</span></a></li></ul>
+</nav>
+<div class="container-fluid">
+<div class="d-sm-flex align-items-center justify-content-between mb-4"><h1 class="h3 mb-0 text-gray-800"><i class="fas fa-plug"></i> Setup Koneksi</h1></div>
+<div id="gateAlert"></div>
+<div class="row">
+<div class="col-lg-6">
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-key"></i> 1 — SSH Key &amp; Test</h6></div>
+<div class="card-body">
+<div class="mb-2"><span id="keyState" class="badge badge-secondary">loading...</span><pre id="pubKey" class="out small mt-2">(loading...)</pre></div>
+<button id="btnKeygen" class="btn btn-secondary btn-sm"><i class="fas fa-plus"></i> Generate key</button>
+<div class="form-row mt-3">
+<div class="form-group col-6"><label>SSH host</label><input id="sHost" class="form-control" placeholder="103.156.16.153"></div>
+<div class="form-group col-3"><label>User</label><input id="sUser" class="form-control" value="root"></div>
+<div class="form-group col-3"><label>Port</label><input id="sPort" type="number" class="form-control" value="22"></div>
+</div>
+<div class="form-group"><label>Password server <small class="text-muted">(sekali saja, untuk salin key)</small></label><input id="cPass" type="password" class="form-control"></div>
+<button id="btnCopyId" class="btn btn-success btn-sm"><i class="fas fa-paper-plane"></i> Salin Key</button>
+<button id="btnSsh" class="btn btn-info btn-sm ml-1"><i class="fas fa-terminal"></i> Test SSH</button>
+<pre id="sshOut" class="out mt-2">Isi host → Salin Key → Test SSH.</pre>
+</div></div>
+</div>
+<div class="col-lg-6">
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-warning"><i class="fas fa-server"></i> 2 — Proxmox API</h6></div>
+<div class="card-body">
+<div class="form-group"><label>Proxmox URL</label><input id="pUrl" class="form-control" value="https://192.168.1.100:8006/api2/json"></div>
+<div class="form-row">
+<div class="form-group col-6"><label>User</label><input id="pUser" class="form-control" value="root@pam"></div>
+<div class="form-group col-6"><label>Token ID <small class="text-muted">setelah '!' saja</small></label><input id="pTokenId" class="form-control" placeholder="panel"></div>
+</div>
+<div class="form-group"><label>Token secret</label><input id="pTokenSecret" type="password" class="form-control"></div>
+<div class="form-row">
+<div class="form-group col-6"><label>Target node <small class="text-muted">(otomatis dari API)</small></label><div class="input-group"><select id="pNode" class="form-control"><option value="">loading...</option></select><div class="input-group-append"><button id="btnNodes" class="btn btn-outline-secondary btn-sm" type="button" title="Refresh"><i class="fas fa-sync"></i></button></div></div><small id="nodeHint" class="form-text text-muted">Test API dulu agar daftar node muncul.</small></div>
+<div class="form-group col-6"><label class="d-block">&nbsp;</label><div class="custom-control custom-checkbox"><input type="checkbox" class="custom-control-input" id="pVerify"><label class="custom-control-label" for="pVerify">Verify TLS</label></div></div>
+</div>
+<button id="btnProx" class="btn btn-warning btn-sm"><i class="fas fa-plug"></i> Test Proxmox API</button>
+<pre id="proxOut" class="out mt-2">not tested</pre>
+</div></div>
+<div class="card shadow mb-4 border-left-success"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-success"><i class="fas fa-save"></i> 3 — Simpan</h6></div>
+<div class="card-body">
+<p class="small text-muted">Test saja tidak menyimpan. Simpan agar Clone &amp; Configure terbuka.</p>
+<button id="btnSave" class="btn btn-success btn-sm"><i class="fas fa-save"></i> Simpan koneksi</button>
+<pre id="setupOut" class="out mt-2">belum disimpan</pre>
+</div></div>
 </div>
 </div>
-<script src="/static/app.js"></script>
-<script src="/static/setup.js"></script>
+</div>
+</div>
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>ProxPilot · Setup → Clone → Configure</span></div></div></footer>
+</div></div>
+<a class="scroll-to-top rounded" href="#page-top"><i class="fas fa-angle-up"></i></a>
+<script src="/static/vendor/jquery.min.js"></script>
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script src="/static/vendor/jquery.easing.min.js"></script>
+<script src="/static/vendor/sb-admin-2.min.js"></script>
+<script src="/static/vendor/sweetalert2.min.js"></script>
+<script src="/static/app.js?v=4"></script>
+<script src="/static/setup.js?v=4"></script>
 </body>
 </html>

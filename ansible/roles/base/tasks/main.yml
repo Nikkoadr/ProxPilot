@@ -1,0 +1,21 @@
+---
+# Base ringan SEMUA VM: qemu-guest-agent agar Proxmox bisa baca IP/status.
+# Debian/Ubuntu (apt) dan RedHat/Rocky (dnf).
+- name: Install guest agent (Debian)
+  apt:
+    name: qemu-guest-agent
+    state: present
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+
+- name: Install guest agent (RedHat)
+  dnf:
+    name: qemu-guest-agent
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Start and enable guest agent
+  service:
+    name: qemu-guest-agent
+    state: started
+    enabled: yes

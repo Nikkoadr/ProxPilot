@@ -172,6 +172,27 @@ func (s *Server) apiSetupPut(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "setup tersimpan", "complete": s.setupComplete()})
 }
 
+func numOr(v, d int) int {
+	if v <= 0 {
+		return d
+	}
+	return v
+}
+
+func orStr(v, d string) string {
+	if strings.TrimSpace(v) == "" {
+		return d
+	}
+	return strings.TrimSpace(v)
+}
+
+func orStatic(v string) string {
+	if v == "static" {
+		return "static"
+	}
+	return "dhcp"
+}
+
 func boolStr(b bool) string {
 	if b {
 		return "1"

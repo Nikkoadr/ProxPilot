@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProxPilot — Deploy</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
+<link href="/static/custom.css?v=4" rel="stylesheet">
+</head>
+<body id="page-top">
+<div id="wrapper">
+<ul class="navbar-nav bg-gradient-primary sidebar sidebar-dark accordion" id="accordionSidebar">
+<a class="sidebar-brand d-flex align-items-center justify-content-center" href="/"><div class="sidebar-brand-icon"><i class="fas fa-server"></i></div><div class="sidebar-brand-text mx-2">ProxPilot</div></a>
+<hr class="sidebar-divider my-0">
+<li class="nav-item"><a class="nav-link" href="/setup"><i class="fas fa-fw fa-plug"></i><span>Setup</span></a></li>
+<li class="nav-item"><a class="nav-link" href="/clone"><i class="fas fa-fw fa-clone"></i><span>Clone VM</span></a></li>
+<li class="nav-item active"><a class="nav-link" href="/deploy"><i class="fas fa-fw fa-rocket"></i><span>Deploy</span></a></li>
+<li class="nav-item"><a class="nav-link" href="/configure"><i class="fas fa-fw fa-cogs"></i><span>Configure</span></a></li>
+<li class="nav-item"><a class="nav-link" href="/settings"><i class="fas fa-fw fa-cog"></i><span>Settings</span></a></li>
+<hr class="sidebar-divider d-none d-md-block"><div class="text-center d-none d-md-inline"><button class="rounded-circle border-0" id="sidebarToggle"></button></div>
+</ul>
+<div id="content-wrapper" class="d-flex flex-column"><div id="content">
+<nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+<button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3"><i class="fa fa-bars"></i></button>
+<ul class="navbar-nav ml-auto"><li class="nav-item"><span class="nav-link text-gray-600 small">{{.User}}</span></li>
+<li class="nav-item"><a id="btnLogout" class="nav-link" href="#"><i class="fas fa-sign-out-alt"></i> <span class="d-none d-lg-inline text-gray-600 small">Logout</span></a></li></ul>
+</nav>
+<div class="container-fluid">
+<div class="d-sm-flex align-items-center justify-content-between mb-4"><h1 class="h3 mb-0 text-gray-800 font-weight-bold"><i class="fas fa-rocket"></i> Deploy (Terraform)</h1>
+<div><button class="btn btn-sm btn-primary shadow-sm" data-toggle="modal" data-target="#clusterModal" style="border-radius: 10px; padding: 0.4rem 1rem;"><i class="fas fa-plus-circle fa-sm text-white-50 mr-2"></i> Buat Cluster</button></div></div>
+<div id="runBox" class="card shadow mb-4" style="display:none"><div class="card-body"><h6 id="runTitle"></h6><div class="log-console"><pre id="runLog" class="out"></pre></div></div></div>
+<div class="modal fade" id="clusterModal" tabindex="-1" role="dialog" aria-hidden="true">
+<div class="modal-dialog modal-dialog-centered modal-xl" role="document">
+<div class="modal-content border-0 shadow" style="border-radius: 20px;">
+<div class="modal-header border-0 pt-4 px-4">
+<h5 class="modal-title font-weight-bold text-gray-800"><i class="fas fa-plus-circle text-primary mr-2"></i>Cluster Baru</h5>
+<button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+</div>
+<div class="modal-body p-4">
+<div class="form-row">
+<div class="form-group col-md-3"><label>Nama cluster *</label><input id="fName" class="form-control" placeholder="web-1"></div>
+<div class="form-group col-md-3"><label>Template * <span id="tplBadge"></span></label><select id="fTemplate" class="form-control"><option value="">loading...</option></select></div>
+<div class="form-group col-md-3"><label>Node</label><select id="fNode" class="form-control"><option value="">loading...</option></select></div>
+<div class="form-group col-md-3"><label>Jumlah VM</label><input id="fCount" type="number" class="form-control" value="2" min="1" max="20"></div>
+</div>
+<div id="vmForms"></div>
+<small class="form-text text-muted mb-2">Deploy membuat VM apa adanya: cloud-init + SSH. Firewall & aplikasi diurus Ansible (Configure).</small>
+</div>
+<div class="modal-footer border-0 p-4">
+<button type="button" class="btn btn-light font-weight-bold px-4" data-dismiss="modal" style="border-radius: 10px;">Batal</button>
+<button id="btnCreate" type="button" class="btn btn-primary font-weight-bold px-4 shadow-sm" style="border-radius: 10px;"><i class="fas fa-plus mr-1"></i> Buat Cluster</button>
+</div>
+</div></div></div>
+<div class="card shadow mb-4"><div class="card-header py-3"><h6 class="m-0 font-weight-bold text-primary"><i class="fas fa-cubes"></i> Clusters</h6></div>
+<div class="card-body"><div class="table-responsive"><table class="table table-bordered table-hover">
+<thead><tr><th>Nama</th><th>Template</th><th>VMs</th><th>IP</th><th>Status</th><th>Aksi</th></tr></thead>
+<tbody id="clusterRows"><tr><td colspan="6" class="text-center text-muted">loading...</td></tr></tbody>
+</table></div>
+<div id="hostBox" class="mt-2"></div>
+</div></div>
+</div>
+</div>
+<footer class="sticky-footer bg-white"><div class="container my-auto"><div class="text-center my-auto"><span>ProxPilot · Terraform + Firewall</span></div></div></footer>
+</div></div>
+<a class="scroll-to-top rounded" href="#page-top"><i class="fas fa-angle-up"></i></a>
+<script src="/static/vendor/jquery.min.js"></script>
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script src="/static/vendor/jquery.easing.min.js"></script>
+<script src="/static/vendor/sb-admin-2.min.js"></script>
+<script src="/static/vendor/sweetalert2.min.js"></script>
+<script src="/static/app.js?v=4"></script>
+<script src="/static/deploy.js?v=4"></script>
+</body>
+</html>

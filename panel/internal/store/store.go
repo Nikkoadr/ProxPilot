@@ -38,12 +38,24 @@ func (s *Store) migrate() error {
 		`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS clusters (id TEXT PRIMARY KEY, name TEXT NOT NULL, node TEXT NOT NULL DEFAULT 'pve',
+			template_vmid INTEGER NOT NULL DEFAULT 0, template_name TEXT NOT NULL DEFAULT '',
+			masters INTEGER NOT NULL DEFAULT 1, workers INTEGER NOT NULL DEFAULT 0,
+			cpu INTEGER NOT NULL DEFAULT 2, ram INTEGER NOT NULL DEFAULT 4096,
+			disk_gb INTEGER NOT NULL DEFAULT 32, bridge TEXT NOT NULL DEFAULT 'vmbr0',
+			ip_mode TEXT NOT NULL DEFAULT 'dhcp', base_ip TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending', created_at INTEGER NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS cluster_hosts (cluster_id TEXT NOT NULL, vm_name TEXT NOT NULL, vmid INTEGER NOT NULL DEFAULT 0, ip TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (cluster_id, vm_name))`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
 			return err
 		}
 	}
+	// Kolom susulan (abaikan bila sudah ada).
+	_, _ = s.db.Exec(`ALTER TABLE clusters ADD COLUMN vm_names TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = s.db.Exec(`ALTER TABLE clusters ADD COLUMN vm_specs TEXT NOT NULL DEFAULT '[]'`)
 	return nil
 }
 

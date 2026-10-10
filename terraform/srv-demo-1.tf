@@ -23,6 +23,9 @@ resource "proxmox_virtual_environment_vm" "srv_demo_1" {
     enabled = false
   }
 
+  # Template boot order (ide2;net0) tanpa disk = nyangkut PXE. scsi0 pertama.
+  boot_order = ["scsi0"]
+
   cpu {
     cores = var.vm_cores
     type  = "host"

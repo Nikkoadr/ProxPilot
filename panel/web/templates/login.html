@@ -4,29 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ProxPilot — Login</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/startbootstrap-sb-admin-2/4.1.4/css/sb-admin-2.min.css" rel="stylesheet">
 </head>
-<body class="d-flex flex-column">
-<div class="page page-center">
-  <div class="container container-tight py-4">
-    <div class="text-center mb-4"><h1>ProxPilot</h1><p class="text-muted">Proxmox Clone + Ansible</p></div>
-    <div class="card card-md">
-      <div class="card-body">
-        <h2 class="h2 text-center mb-4">Login</h2>
-        <div class="mb-3"><label class="form-label">Username</label>
-          <input id="username" class="form-control" value="admin" autocomplete="username"></div>
-        <div class="mb-3"><label class="form-label">Password</label>
-          <input id="password" type="password" class="form-control" autocomplete="current-password"></div>
-        <div id="err" class="text-danger mb-2"></div>
-        <button id="btn" class="btn btn-primary w-100">Login</button>
+<body class="bg-gradient-primary">
+<div class="container">
+  <div class="row justify-content-center">
+    <div class="col-xl-5 col-lg-6 col-md-8">
+      <div class="card o-hidden border-0 shadow-lg my-5">
+        <div class="card-body p-5">
+          <div class="text-center"><h1 class="h4 text-gray-900 mb-1"><i class="fas fa-server"></i> ProxPilot</h1>
+          <p class="small text-muted mb-4">Proxmox Clone + Ansible</p></div>
+          <div class="form-group"><input id="username" class="form-control form-control-user" value="admin" placeholder="Username"></div>
+          <div class="form-group"><input id="password" type="password" class="form-control form-control-user" placeholder="Password"></div>
+          <button id="btn" class="btn btn-primary btn-user btn-block">Login</button>
+          <hr><div class="text-center small text-muted">Default: <code>admin / admin123</code></div>
+        </div>
       </div>
     </div>
-    <div class="text-center text-muted mt-3">Default: <code>admin / admin123</code></div>
   </div>
 </div>
+<script src="/static/vendor/jquery.min.js"></script>
+<script src="/static/vendor/bootstrap.bundle.min.js"></script>
+<script src="/static/vendor/sweetalert2.min.js"></script>
 <script>
 document.getElementById('btn').onclick = async () => {
-  const err = document.getElementById('err'); err.textContent = '';
   try {
     const r = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({username: document.getElementById('username').value,
@@ -34,7 +36,7 @@ document.getElementById('btn').onclick = async () => {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.status);
     location.href = '/';
-  } catch(e) { err.textContent = e.message; }
+  } catch(e) { Swal.fire('Gagal', e.message, 'error'); }
 };
 document.getElementById('password').onkeydown = e => { if (e.key === 'Enter') document.getElementById('btn').click(); };
 </script>

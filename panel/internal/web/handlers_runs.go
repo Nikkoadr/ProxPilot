@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"proxpilot/internal/ansible"
+	"proxpilot/internal/proxmox"
 	"proxpilot/internal/runs"
 )
 
@@ -21,11 +22,19 @@ func (s *Server) apiConfigTemplates(c *gin.Context) {
 func (s *Server) apiConfigure(c *gin.Context) {
 	var b struct {
 		VMIDs    []uint64 `json:"vmids"`
-		Template string   `json:"template"`
-		SSHUser  string   `json:"ssh_user"`
+		Hosts    []struct {
+			Name string `json:"name"`
+			IP   string `json:"ip"`
+		} `json:"hosts"`
+		Template string `json:"template"`
+		SSHUser  string `json:"ssh_user"`
 	}
-	if err := c.ShouldBindJSON(&b); err != nil || len(b.VMIDs) == 0 || b.Template == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "pilih VM + template dulu"})
+	if err := c.ShouldBindJSON(&b); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+		return
+	}
+	if b.Template == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "pilih template dulu"})
 		return
 	}
 	playbook, ok := ansible.Playbooks[b.Template]
@@ -37,39 +46,70 @@ func (s *Server) apiConfigure(c *gin.Context) {
 	if sshUser == "" {
 		sshUser = "ubuntu"
 	}
+	// Two host sources: explicit cluster hosts (IP known, no agent needed)
+	// or live VMIDs (IP via guest agent).
+	var hosts []ansible.Host
+	for _, h := range b.Hosts {
+		if strings.TrimSpace(h.Name) == "" || strings.TrimSpace(h.IP) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "host cluster tanpa IP — Deploy static dulu"})
+			return
+		}
+		hosts = append(hosts, ansible.Host{Name: h.Name, IP: h.IP, User: sshUser})
+	}
+	if len(hosts) == 0 {
+		if len(b.VMIDs) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "pilih VM/host dulu"})
+			return
+		}
+		var err error
+		hosts, err = s.hostsFromVMIDs(b.VMIDs, sshUser)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 	r := s.runs.Start("configure "+b.Template, func(r *runs.Run) {
-		s.flowConfigure(r, b.VMIDs, b.Template, playbook, sshUser)
+		s.flowConfigureHosts(r, hosts, b.Template, playbook)
 	})
 	c.JSON(http.StatusCreated, gin.H{"ok": true, "run_id": r.ID})
 }
 
-func (s *Server) flowConfigure(r *runs.Run, vmids []uint64, template, playbook, sshUser string) {
+// hostsFromVMIDs resolves live VMs to ansible hosts via guest-agent IP.
+func (s *Server) hostsFromVMIDs(vmids []uint64, sshUser string) ([]ansible.Host, error) {
 	vms, _, _, err := s.fetchAll()
 	if err != nil {
-		r.Fail("gagal list VM: " + err.Error())
-		return
+		return nil, err
 	}
-	byID := map[uint64]string{}
-	var hosts []ansible.Host
+	creds, ok := s.creds()
+	if !ok {
+		return nil, fmt.Errorf("setup belum disimpan")
+	}
+	byID := map[uint64]proxmox.VM{}
 	for _, v := range vms {
-		if v.Template {
-			continue
+		if !v.Template {
+			byID[v.VMID] = v
 		}
-		byID[v.VMID] = v.Name
 	}
+	var hosts []ansible.Host
 	for _, id := range vmids {
-		name, ok := byID[id]
+		v, ok := byID[id]
 		if !ok {
-			r.Fail(fmt.Sprintf("vmid %d tidak ada (atau itu template)", id))
-			return
+			return nil, fmt.Errorf("vmid %d tidak ada (atau itu template)", id)
 		}
-		ip, err := s.resolveHostIP(id, name)
-		if err != nil {
-			r.Fail(fmt.Sprintf("vm %s (%d): %v", name, id, err))
-			return
+		node := v.Node
+		if node == "" {
+			node = s.setupNode()
 		}
-		hosts = append(hosts, ansible.Host{Name: name, IP: ip, User: sshUser})
+		ip := creds.AgentIP(node, id)
+		if ip == "" {
+			return nil, fmt.Errorf("vm %s (%d): IP belum terbaca (agent mati / baru boot)", v.Name, id)
+		}
+		hosts = append(hosts, ansible.Host{Name: v.Name, IP: ip, User: sshUser})
 	}
+	return hosts, nil
+}
+
+func (s *Server) flowConfigureHosts(r *runs.Run, hosts []ansible.Host, template, playbook string) {
 	dir := filepath.Join(s.runsDir(), r.ID)
 	_ = os.MkdirAll(dir, 0o755)
 	inv, err := ansible.WriteInventory(dir, hosts)
@@ -77,37 +117,12 @@ func (s *Server) flowConfigure(r *runs.Run, vmids []uint64, template, playbook, 
 		r.Fail(err.Error())
 		return
 	}
-	r.Log("%d VM -> %s (%s)", len(hosts), template, playbook)
+	r.Log("%d host -> %s (%s)", len(hosts), template, playbook)
 	if err := ansible.StreamPlaybook(s.cfg.AnsibleDir, playbook, inv, r); err != nil {
 		r.Fail(err.Error())
 		return
 	}
 	r.Done("selesai: " + template)
-}
-
-// resolveHostIP gets VM IP via guest agent.
-func (s *Server) resolveHostIP(vmid uint64, name string) (string, error) {
-	creds, ok := s.creds()
-	if !ok {
-		return "", fmt.Errorf("setup belum disimpan")
-	}
-	vms, _, _, err := s.fetchAll()
-	if err != nil {
-		return "", err
-	}
-	for _, v := range vms {
-		if v.VMID == vmid && !v.Template {
-			node := v.Node
-			if node == "" {
-				node = s.setupNode()
-			}
-			if ip := creds.AgentIP(node, vmid); ip != "" {
-				return ip, nil
-			}
-			return "", fmt.Errorf("IP belum terbaca (agent mati / VM baru boot) — start VM dan tunggu")
-		}
-	}
-	return "", fmt.Errorf("tidak ketemu")
 }
 
 // ---------- runs: status + SSE ----------
